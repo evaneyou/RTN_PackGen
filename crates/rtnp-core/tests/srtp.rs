@@ -156,3 +156,76 @@ fn srtp_needs_plain_rtp_and_no_bidir() {
     };
     assert!(bidir.resolve(0).is_err());
 }
+
+#[tokio::test]
+async fn tone_payload_is_real_decodable_g711_audio_and_works_with_srtp() {
+    use rtnp_core::audio::{alaw_to_linear, ulaw_to_linear};
+    for (codec, srtp) in [("g711", false), ("g711a", true)] {
+        let sink = UdpSocket::bind((LO, 0)).await.unwrap();
+        let spec = FlowSpec {
+            target: sink.local_addr().unwrap().to_string(),
+            preset: Some(format!("voip-{codec}")),
+            payload: Some("tone:1000".parse().unwrap()),
+            srtp_key: srtp.then(|| key(3)),
+            ..call(10, None)
+        };
+        let (_tx, stop) = watch::channel(false);
+        let log = LogSink::none();
+        let run = tokio::spawn(run_flow(
+            1,
+            1,
+            spec.resolve(0).unwrap(),
+            log.handle(),
+            false,
+            stop,
+        ));
+        let mut rx = SrtpReceiver::new(&key(3));
+        let mut pcm = Vec::new();
+        let mut buf = vec![0u8; 2048];
+        while let Ok(Ok(mut n)) = timeout(Duration::from_millis(400), sink.recv(&mut buf)).await {
+            if srtp {
+                n = rx.unprotect(&mut buf[..n]).unwrap();
+            }
+            pcm.extend(buf[12..n].iter().map(|b| {
+                if codec == "g711" {
+                    ulaw_to_linear(*b)
+                } else {
+                    alaw_to_linear(*b)
+                }
+            }));
+        }
+        run.await.unwrap().unwrap();
+        assert_eq!(pcm.len(), 1600, "10 packets x 160 samples");
+        // 1 kHz at 8 kHz sampling repeats every 8 samples; packets are contiguous slices of it
+        for i in 8..pcm.len() {
+            assert!(
+                (pcm[i] as i32 - pcm[i - 8] as i32).abs() < 700,
+                "{codec} sample {i}"
+            );
+        }
+        assert!(pcm.iter().any(|s| s.unsigned_abs() > 8000), "audible level");
+    }
+}
+
+#[test]
+fn audio_payloads_need_plain_rtp_g711() {
+    let tone = |wire, preset: &str| FlowSpec {
+        target: "127.0.0.1:1".into(),
+        preset: Some(preset.into()),
+        wire,
+        payload: Some("tone".parse().unwrap()),
+        ..Default::default()
+    };
+    assert!(tone(Some(Wire::Rtp), "voip-g711").resolve(0).is_ok());
+    assert!(tone(None, "voip-g711").resolve(0).is_err(), "rtnp wire");
+    assert!(
+        tone(Some(Wire::Rtp), "voip-g729").resolve(0).is_err(),
+        "not G.711"
+    );
+    assert!("tone:0".parse::<rtnp_core::flow::Payload>().is_err());
+    let wav = FlowSpec {
+        payload: Some("wav:/definitely/missing.wav".parse().unwrap()),
+        ..tone(Some(Wire::Rtp), "voip-g711")
+    };
+    assert!(wav.resolve(0).is_err());
+}

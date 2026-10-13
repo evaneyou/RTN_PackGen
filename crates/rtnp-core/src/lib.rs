@@ -4,6 +4,7 @@
 //! * [`sender`] generates it, [`receiver`] measures it, [`control`] links the two.
 //! * [`log`] and [`report`] record and analyse results.
 
+pub mod audio;
 pub mod auth;
 pub mod client;
 pub mod control;

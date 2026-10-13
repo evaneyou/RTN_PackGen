@@ -259,6 +259,11 @@ pub enum Payload {
     Pattern(Vec<u8>),
     /// Contents of a local file, repeated as needed (`file:/path`).
     File(String),
+    /// Real G.711 audio: a sine tone (`tone` = 440 Hz, or `tone:<hz>`). Plain-RTP G.711 only.
+    Tone(u32),
+    /// Real G.711 audio from an 8 kHz mono 16-bit WAV file (`wav:/path`), looped. Plain-RTP
+    /// G.711 only.
+    Wav(String),
 }
 
 impl FromStr for Payload {
@@ -268,6 +273,7 @@ impl FromStr for Payload {
         match s.to_ascii_lowercase().as_str() {
             "zero" => return Ok(Payload::Zero),
             "random" => return Ok(Payload::Random),
+            "tone" => return Ok(Payload::Tone(440)),
             _ => {}
         }
         if let Some(h) = s.strip_prefix("pattern:") {
@@ -282,8 +288,22 @@ impl FromStr for Payload {
             }
             return Ok(Payload::File(p.to_string()));
         }
+        if let Some(h) = s.strip_prefix("tone:") {
+            let hz = h
+                .parse::<u32>()
+                .ok()
+                .filter(|hz| (1..=3999).contains(hz))
+                .ok_or_else(|| Error::Config("tone:<hz> needs 1-3999".into()))?;
+            return Ok(Payload::Tone(hz));
+        }
+        if let Some(p) = s.strip_prefix("wav:") {
+            if p.is_empty() {
+                return Err(Error::Config("wav payload needs a path".into()));
+            }
+            return Ok(Payload::Wav(p.to_string()));
+        }
         Err(Error::Config(format!(
-            "unknown payload '{s}' (zero, random, pattern:<hex>, file:<path>)"
+            "unknown payload '{s}' (zero, random, pattern:<hex>, file:<path>, tone[:<hz>], wav:<path>)"
         )))
     }
 }
@@ -295,6 +315,8 @@ impl std::fmt::Display for Payload {
             Payload::Random => write!(f, "random"),
             Payload::Pattern(b) => write!(f, "pattern:{}", hex_encode(b)),
             Payload::File(p) => write!(f, "file:{p}"),
+            Payload::Tone(hz) => write!(f, "tone:{hz}"),
+            Payload::Wav(p) => write!(f, "wav:{p}"),
         }
     }
 }
@@ -741,6 +763,20 @@ impl FlowSpec {
                 PayloadData::Bytes(Arc::new(v))
             }
             Payload::Pattern(b) => PayloadData::Bytes(Arc::new(b)),
+            Payload::Tone(hz) => {
+                PayloadData::Bytes(Arc::new(crate::audio::tone(hz, audio_codec(wire, rtp)?)?))
+            }
+            Payload::Wav(path) => {
+                if !opts.allow_file_payload {
+                    return Err(Error::Config(
+                        "wav payloads are not allowed for this flow source".into(),
+                    ));
+                }
+                PayloadData::Bytes(Arc::new(crate::audio::wav_file(
+                    &path,
+                    audio_codec(wire, rtp)?,
+                )?))
+            }
             Payload::File(path) => {
                 if !opts.allow_file_payload {
                     return Err(Error::Config(
@@ -785,6 +821,17 @@ impl FlowSpec {
             first_marker: self.first_marker,
             srtp_key: self.srtp_key.clone(),
         })
+    }
+}
+
+/// Real audio needs plain-RTP G.711 voice.
+fn audio_codec(wire: Wire, rtp: Option<Codec>) -> Result<Codec> {
+    match (wire, rtp) {
+        (Wire::Rtp, Some(c @ (Codec::G711 | Codec::G711a))) => Ok(c),
+        _ => Err(Error::Config(
+            "tone/wav audio needs plain-RTP G.711 voice (wire = rtp and rtp = g711 or g711a)"
+                .into(),
+        )),
     }
 }
 
