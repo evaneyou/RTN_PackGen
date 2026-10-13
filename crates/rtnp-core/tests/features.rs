@@ -253,6 +253,7 @@ async fn remote_launch_runs_flows_on_the_agent_and_is_guarded() {
         flows(far_udp, 60),
         Some(far_ctl.to_string()),
         stop,
+        None,
     )
     .await
     .unwrap();
@@ -264,10 +265,17 @@ async fn remote_launch_runs_flows_on_the_agent_and_is_guarded() {
     let mut evil = flows(far_udp, 5);
     evil[0].payload = Some(Payload::File("/etc/passwd".into()));
     let (_tx, stop) = no_stop();
-    let err = remote_launch(&agent_ctl.to_string(), Some(b"s3cret"), evil, None, stop)
-        .await
-        .unwrap_err()
-        .to_string();
+    let err = remote_launch(
+        &agent_ctl.to_string(),
+        Some(b"s3cret"),
+        evil,
+        None,
+        stop,
+        None,
+    )
+    .await
+    .unwrap_err()
+    .to_string();
     assert!(err.contains("rejected"), "{err}");
 
     // an agent without --allow-launch refuses
@@ -278,6 +286,7 @@ async fn remote_launch_runs_flows_on_the_agent_and_is_guarded() {
         flows(far_udp, 5),
         None,
         stop,
+        None,
     )
     .await
     .unwrap_err()
@@ -319,6 +328,7 @@ async fn log_server_stores_streams_and_checks_keys() {
             out_dir: dir.clone(),
             key: Some(b"k3y".to_vec()),
             max_bytes_per_conn: 1 << 20,
+            tls: None,
             on_event: Arc::new(move |m| ev.lock().unwrap().push(m)),
         },
     ));

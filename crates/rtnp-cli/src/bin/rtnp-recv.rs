@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use rtnp_cli::{fmt_summary, load_key, parse_duration};
+use rtnp_cli::{fmt_summary, load_key, load_tls_client, load_tls_server, parse_duration};
 use rtnp_core::log::LogSink;
 use rtnp_core::receiver::{Receiver, ReceiverConfig, Shared};
 
@@ -49,6 +49,15 @@ struct Args {
     /// Read the shared key from a file
     #[arg(long)]
     key_file: Option<PathBuf>,
+    /// Serve the control channel over TLS with this certificate chain (PEM). Needs --tls-key
+    #[arg(long, requires = "tls_key")]
+    tls_cert: Option<PathBuf>,
+    /// Private key (PEM) for --tls-cert
+    #[arg(long, requires = "tls_cert")]
+    tls_key: Option<PathBuf>,
+    /// Connect to --log-server over TLS, trusting the CA certificate(s) in this PEM file
+    #[arg(long)]
+    tls_ca: Option<PathBuf>,
     /// Let authenticated controllers make THIS host generate traffic (agent mode). Requires a key.
     /// Anyone holding the key can direct traffic from this host to any destination.
     #[arg(long)]
@@ -91,9 +100,14 @@ async fn main() -> Result<()> {
         (Some(p), _) => LogSink::to_file(p)
             .await
             .with_context(|| format!("cannot open log {}", p.display()))?,
-        (None, Some(addr)) => LogSink::to_remote(addr, &args.log_tag, key.as_deref())
-            .await
-            .with_context(|| format!("cannot reach log server {addr}"))?,
+        (None, Some(addr)) => LogSink::to_remote_with(
+            addr,
+            &args.log_tag,
+            key.as_deref(),
+            load_tls_client(&args.tls_ca)?.as_ref(),
+        )
+        .await
+        .with_context(|| format!("cannot reach log server {addr}"))?,
         (None, None) => LogSink::none(),
     };
     let cfg = ReceiverConfig {
@@ -108,6 +122,7 @@ async fn main() -> Result<()> {
         allow_launch: args.allow_launch,
         allow_reverse: args.allow_reverse,
         sip_port: args.sip_port,
+        tls: load_tls_server(&args.tls_cert, &args.tls_key)?,
         srtp_key: rtnp_core::srtp::load_key(
             args.srtp_key.as_deref(),
             args.srtp_key_file.as_deref(),
@@ -126,6 +141,9 @@ async fn main() -> Result<()> {
         rx.metrics_addr().map(|a| a.to_string()).unwrap_or_else(off),
         rx.sip_addr().map(|a| a.to_string()).unwrap_or_else(off),
     );
+    if args.tls_cert.is_some() && rx.control_addr().is_some() {
+        eprintln!("control channel: TLS");
+    }
     if key.is_some() {
         eprintln!("control channel: authentication required");
     } else if rx.control_addr().is_some() {

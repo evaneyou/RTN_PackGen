@@ -14,9 +14,10 @@ use tokio::io::{AsyncWrite, AsyncWriteExt, BufWriter};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
-use crate::client::connect_control;
+use crate::client::connect_control_with;
 use crate::control::write_msg;
 use crate::error::{Error, Result};
+use crate::tls::TlsClient;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "ev", rename_all = "snake_case")]
@@ -120,7 +121,17 @@ impl LogSink {
 
     /// Stream records to a `rtnp-logd` server. `tag` names the stream on the server.
     pub async fn to_remote(addr: &str, tag: &str, key: Option<&[u8]>) -> Result<Self> {
-        let mut s = connect_control(addr, key).await?;
+        Self::to_remote_with(addr, tag, key, None).await
+    }
+
+    /// Like [`LogSink::to_remote`], inside TLS when `tls` is given.
+    pub async fn to_remote_with(
+        addr: &str,
+        tag: &str,
+        key: Option<&[u8]>,
+        tls: Option<&TlsClient>,
+    ) -> Result<Self> {
+        let mut s = connect_control_with(addr, key, tls).await?;
         write_msg(
             &mut s,
             &LogHello {

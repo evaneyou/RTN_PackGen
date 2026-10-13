@@ -20,14 +20,17 @@ measures delay, jitter, loss and round trip at the receiver, and checks the resu
   unmarked comparison to test whether a priority queue protects voice.
 * **Built-in traffic models.** Constant, exponential, Pareto and normal distributions, voice and video
   presets, and estimated profiles for games, video conferencing, remote desktop and market data.
+* **Real calls when you need them.** Optional SIP/SDP call setup, SRTP encryption with per-call keys,
+  and real G.711 audio (a test tone or your own WAV file). All off by default.
 * **Distributed.** Remote-launch agent, central log server, Prometheus metrics, optional shared-key
-  authentication, and a library API in addition to the command line.
+  authentication, optional TLS on the control and log channels, and a library API in addition to the
+  command line.
 
 ## Layout
 
 | Crate | Contents |
 |---|---|
-| `rtnp-core` | The library: distributions, presets, flow specs, wire protocol, sender and receiver engines, control channel with auth, remote-launch agent, log server, metrics, log analysis. Start with `rtnp_core::client`. |
+| `rtnp-core` | The library: distributions, presets, flow specs, wire protocol, sender and receiver engines, SRTP, SIP/SDP, G.711 audio, TLS, control channel with auth, remote-launch agent, log server, metrics, log analysis. Start with `rtnp_core::client`. |
 | `rtnp-cli` | Binaries `rtnp-send`, `rtnp-recv`, `rtnp-logd`, `rtnp-decode`. |
 
 ## Quick start
@@ -108,7 +111,8 @@ Defaults: 1000 packets/s, 512-byte packets, 10 s.
   (defaults `exp:1004` / `exp:1587` ms, override with `--vad-talk` / `--vad-silence`).
 * **Plain RTP** (`--wire rtp`, `--video`, the `video-conference` preset): the UDP payload is exactly an RTP packet,
   with no measurement header; see below.
-* **Payloads** (`--payload zero|random|pattern:<hex>|file:<path>`): packet body content after the headers.
+* **Payloads** (`--payload zero|random|pattern:<hex>|file:<path>|tone[:<hz>]|wav:<path>`): packet body
+  content after the headers. `tone` and `wav` are real G.711 audio (see below).
 * **Remote launch** (`rtnp-send ... --agent host:port`): run the flows from another host that runs
   `rtnp-recv --allow-launch`. See Security.
 * **Central logging**: `rtnp-logd` collects JSONL streams; senders and receivers use `--log-server host:port
@@ -150,7 +154,8 @@ rtnp-send flow -t 10.0.0.2:8998 --video --video-fps 25 --video-gop 50 \
 * **Limits**: RTP carries no send time, so there is no one-way delay (the delay figures are relative to
   the first packet and flagged `delay_relative`), and no round-trip metering (`--meter rtt` is
   refused; use RTCP for round trip, below). Preset sizes drop the 32-byte header (G.711 is 172 bytes).
-  Not implemented: SIP/SDP call setup, SRTP, RTP over TCP, real codec bitstreams.
+  Not implemented: RTP over TCP, real video bitstreams. SIP, SRTP and real G.711 audio are covered
+  below.
 
 ### Choosing voice options
 
@@ -166,6 +171,10 @@ you set it. TOML scripts use the field names instead of flags (for example `rtcp
 | Two-way call | `--bidir` (receiver needs `--allow-reverse`) | off |
 | Packet interval and size from the codec | `--ptime 30`, also with `--preset` | codec default |
 | Payload content | `--payload zero\|random\|pattern:<hex>\|file:<path>` | codec silence |
+| Real G.711 audio | `--payload tone`, `tone:1000`, `wav:<file>` | off |
+| SRTP encryption, fixed key | `--srtp-key-file <file>` (both ends) | off |
+| SIP call setup | `--sip` (receiver needs `--sip-port`) | off |
+| SRTP with a per-call key sent in SDP | `--sip --srtp` | off |
 | IP type of service / TTL | `--tos 16`, `--ttl 64` | OS default |
 | Run length | `-d 30s`, `--count`, `--max-bytes`, `--forever` | 10 s |
 
@@ -192,6 +201,44 @@ the sender) with loss, RFC 3550 jitter and rate. `--bidir` needs `--wire rtp`, `
   direction (see Continuous mode).
 * Jitter of the two streams is measured independently, each at its receiving end, so no clock sync is
   needed. There is no one-way delay in plain-RTP mode.
+
+## SIP, SRTP and real audio
+
+These make a test call look and behave more like a real phone call. Each one is opt-in and works on its
+own or together with the others.
+
+```sh
+# receiver: answer SIP on 5060, media on the usual UDP port
+rtnp-recv --sip-port 5060
+
+# a call: INVITE with an SDP offer, media to the port in the answer, BYE at the end.
+# --srtp encrypts with a fresh key sent in the SDP; tone:1000 is real 1 kHz G.711 audio
+rtnp-send flow -t 10.0.0.2:5060 -c 10.0.0.2:8999 --preset voip-g711a --wire rtp \
+    --sip --srtp --payload tone:1000 -d 60s
+```
+
+* **Real audio** (`--payload tone[:<hz>]` or `wav:<file>`): the audio is encoded to µ-law or A-law to
+  match the codec and looped, so Wireshark's RTP player (or a phone at the far end) plays it. The default
+  tone is 440 Hz at about -10 dBFS. WAV files must be 8 kHz, mono, 16-bit PCM; to convert one:
+  `ffmpeg -i in.wav -ar 8000 -ac 1 -c:a pcm_s16le out.wav`. G.711 only, since G.729 and G.723.1 need a
+  real encoder. Remote agents refuse `wav:` (it reads a local file).
+* **SRTP** (RFC 3711, `AES_CM_128_HMAC_SHA1_80`): the RTP payload is encrypted and a 10-byte
+  authentication tag is added, so packets are 10 bytes larger (G.711 at 20 ms: 182 bytes). With a fixed
+  key, give both ends the same 30-byte key: `rtnp-send srtp-key > srtp.key`, then
+  `--srtp-key-file srtp.key` on both (or `RTNP_SRTP_KEY`). The receiver drops packets that fail
+  authentication and counts them as malformed. RTCP is not encrypted (no SRTCP), and SRTP is not
+  available for two-way calls (`--bidir`) or remote agents yet.
+* **SIP/SDP** (`--sip`): the sender's target is the receiver's SIP address. It sends an INVITE over UDP
+  with an SDP offer (codec, ptime, and with `--srtp` an SDES `a=crypto` line carrying a fresh key),
+  acknowledges the 200 OK, sends media to the address and port in the answer, and hangs up with BYE.
+  `rtnp-recv --sip-port` answers with its UDP data port and learns each call's key; it forgets the key at
+  BYE. If the receiver was started with a fixed `--srtp-key`, offers must carry exactly that key or get
+  `488 Not Acceptable Here`.
+* **Limits.** The SIP side is a test endpoint, not a phone or a PBX: UDP only, no registration, no
+  digest authentication (a `401`/`407` is reported as such), no re-INVITE or hold, one audio stream per
+  call. It has been tested against itself, not against third-party PBXs or SBCs. SDES sends the key in
+  clear inside the SIP message, as it does on real networks unless SIP runs over TLS, so treat it as
+  test-grade key exchange.
 
 ## Voice quality: round trip, marking, verdicts
 
@@ -281,9 +328,17 @@ On Ctrl-C a final `{"type":"final","session":..,"flows":[..]}` line carries the 
 * **Authentication.** With `--key`/`--key-file`/`RTNP_KEY`, the control channel and log server require a
   shared key (HMAC-SHA256 challenge-response, mutual). Keys must be at least 8 bytes. Prefer the
   environment variable or a key file: `--key` is visible in the process list.
-* **No encryption.** Authentication does not encrypt traffic or stop someone who can hijack an established
-  connection. Use a VPN or SSH tunnel across untrusted networks. Without a key the control channel is open
-  and `rtnp-recv` warns about it.
+* **TLS (optional).** The control channel (`rtnp-recv --tls-cert server.pem --tls-key server-key.pem`)
+  and the log server (`rtnp-logd`, same flags) can run over TLS 1.2/1.3. Clients pass `--tls-ca ca.pem`
+  (`rtnp-send` for `--control`, `--agent` and `--log-server`; `rtnp-recv` for `--log-server`) and verify
+  that the server's certificate names the host they connect to. There is no option to skip
+  verification. `scripts/make-test-certs.sh <host-or-ip>` makes a private CA and a server certificate;
+  a single self-signed certificate made with `openssl req -x509` will not work because it is marked as
+  a CA. Use TLS together with a key: TLS hides and protects the channel, the key decides who may use it.
+  The traffic being measured and the Prometheus endpoint are not encrypted (use SRTP for RTP media).
+* **Without TLS** authentication does not encrypt traffic or stop someone who can hijack an established
+  connection; use TLS, a VPN or an SSH tunnel across untrusted networks. Without a key the control
+  channel is open and `rtnp-recv` warns about it.
 * **Agent mode lets key holders generate traffic from that host to any destination.** It is off by default,
   requires a key and a control port, accepts at most 64 flows per launch, runs at most 2 launches at once,
   caps every flow at one hour, and refuses `file:` payloads (so a controller cannot read files on the
@@ -310,8 +365,12 @@ On Ctrl-C a final `{"type":"final","session":..,"flows":[..]}` line carries the 
 ## Not implemented
 
 * **Parquet output**: JSONL, CSV and JSON are supported; Parquet would add a large dependency tree.
-* **SIP / SDP / SRTP**, and real codec bitstreams (see Plain-RTP mode).
-* **Encrypted control/log channels** (see Security) and SCTP multi-streaming/multi-homing.
+* **SCTP multi-streaming and multi-homing**: SCTP flows use one stream on one address pair.
+* **Fuller SIP**: registration, digest authentication, SIP over TCP/TLS, re-INVITE, and testing against
+  third-party PBXs.
+* **SRTCP**, SRTP on two-way calls and remote agents, and DTLS-SRTP key exchange.
+* **Real video bitstreams** (H.264/VP8) and real G.729/G.723.1 audio.
+* **Mutual TLS** (client certificates); clients are authenticated with the shared key instead.
 
 ## Development
 
@@ -321,8 +380,9 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-The test suite (78 tests) runs entirely on loopback and covers the wire format, RTP and RTCP, the
-control channel and authentication, remote launch, logging and metrics, and end-to-end flows.
+The test suite (106 tests) runs entirely on loopback and covers the wire format, RTP and RTCP, SRTP
+(including the RFC 3711 test vectors), G.711 encoding, SIP/SDP call setup, TLS, the control channel and
+authentication, remote launch, logging and metrics, and end-to-end flows.
 
 ## License
 

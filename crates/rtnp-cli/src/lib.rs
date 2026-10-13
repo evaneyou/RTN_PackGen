@@ -158,6 +158,26 @@ pub fn fmt_report(r: &FlowReport) -> String {
     out
 }
 
+/// TLS client settings from `--tls-ca` (off when no CA file is given).
+pub fn load_tls_client(ca: &Option<PathBuf>) -> anyhow::Result<Option<rtnp_core::tls::TlsClient>> {
+    ca.as_deref()
+        .map(rtnp_core::tls::TlsClient::from_ca_file)
+        .transpose()
+        .map_err(Into::into)
+}
+
+/// TLS server settings from `--tls-cert` / `--tls-key` (off when neither is given).
+pub fn load_tls_server(
+    cert: &Option<PathBuf>,
+    key: &Option<PathBuf>,
+) -> anyhow::Result<Option<rtnp_core::tls::TlsServer>> {
+    match (cert, key) {
+        (Some(c), Some(k)) => Ok(Some(rtnp_core::tls::TlsServer::from_files(c, k)?)),
+        (None, None) => Ok(None),
+        _ => anyhow::bail!("--tls-cert and --tls-key go together"),
+    }
+}
+
 /// Resolve the shared key from `--key` / `RTNP_KEY` or `--key-file`. Prefer the environment
 /// variable or a file over `--key`, which is visible in the process list.
 pub fn load_key(key: &Option<String>, file: &Option<PathBuf>) -> anyhow::Result<Option<Vec<u8>>> {

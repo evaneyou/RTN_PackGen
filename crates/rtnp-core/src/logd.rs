@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpListener;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 use tokio::time::timeout;
@@ -27,6 +27,8 @@ pub struct LogdConfig {
     pub key: Option<Vec<u8>>,
     /// Each connection is cut off after this many bytes.
     pub max_bytes_per_conn: u64,
+    /// Serve over TLS with this certificate.
+    pub tls: Option<crate::tls::TlsServer>,
     /// Called with a one-line description of notable events (connections, errors).
     pub on_event: Arc<dyn Fn(String) + Send + Sync>,
 }
@@ -63,6 +65,13 @@ pub async fn serve(listener: TcpListener, cfg: LogdConfig) -> Result<()> {
                 let cfg = cfg.clone();
                 let n = counter.fetch_add(1, Ordering::Relaxed);
                 conns.spawn(async move {
+                    let stream = match crate::tls::accept_optional(cfg.tls.as_ref(), stream).await {
+                        Ok(s) => s,
+                        Err(e) => {
+                            (cfg.on_event)(format!("{peer}: {e}"));
+                            return;
+                        }
+                    };
                     if let Err(e) = handle(stream, peer, &cfg, n).await {
                         (cfg.on_event)(format!("{peer}: {e}"));
                     }
@@ -75,7 +84,7 @@ pub async fn serve(listener: TcpListener, cfg: LogdConfig) -> Result<()> {
 }
 
 async fn handle(
-    mut s: TcpStream,
+    mut s: crate::tls::Stream,
     peer: std::net::SocketAddr,
     cfg: &LogdConfig,
     n: u64,

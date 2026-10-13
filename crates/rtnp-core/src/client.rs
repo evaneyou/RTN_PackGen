@@ -20,6 +20,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::tls::{Stream, TlsClient};
 use serde::Serialize;
 use tokio::net::TcpStream;
 use tokio::sync::watch;
@@ -104,6 +105,8 @@ pub struct SessionOptions {
     pub on_interval: Option<IntervalCallback>,
     /// Judge every interval and the final report against these limits.
     pub limits: Option<crate::verdict::QualityLimits>,
+    /// Connect to the receiver's control channel over TLS.
+    pub tls: Option<TlsClient>,
 }
 
 impl SessionOptions {
@@ -117,6 +120,7 @@ impl SessionOptions {
             interval: None,
             on_interval: None,
             limits: None,
+            tls: None,
         }
     }
 }
@@ -136,11 +140,24 @@ fn timed_out(what: &str) -> Error {
 }
 
 /// Connect to a control channel and authenticate if a key is given.
-pub async fn connect_control(addr: &str, key: Option<&[u8]>) -> Result<TcpStream> {
-    let mut s = timeout(CONNECT_TIMEOUT, TcpStream::connect(addr))
+pub async fn connect_control(addr: &str, key: Option<&[u8]>) -> Result<Stream> {
+    connect_control_with(addr, key, None).await
+}
+
+/// Like [`connect_control`], inside TLS when `tls` is given.
+pub async fn connect_control_with(
+    addr: &str,
+    key: Option<&[u8]>,
+    tls: Option<&TlsClient>,
+) -> Result<Stream> {
+    let tcp = timeout(CONNECT_TIMEOUT, TcpStream::connect(addr))
         .await
         .map_err(|_| timed_out(&format!("connecting to {addr}")))?
         .map_err(|e| Error::Protocol(format!("cannot connect to {addr}: {e}")))?;
+    let mut s = match tls {
+        Some(t) => t.connect(addr, tcp).await?,
+        None => Stream::Plain(tcp),
+    };
     if let Some(k) = key {
         timeout(CONNECT_TIMEOUT, auth::client_handshake(&mut s, k))
             .await
@@ -208,7 +225,7 @@ struct IntervalClock {
 }
 
 async fn poll_window(
-    ctl: &mut TcpStream,
+    ctl: &mut Stream,
     session: u32,
 ) -> std::result::Result<Vec<crate::control::RemoteFlowSummary>, String> {
     write_msg(ctl, &ClientMsg::Poll { session })
@@ -229,7 +246,7 @@ async fn interval_tick(
     flows: &[ResolvedFlow],
     progress: &[Arc<FlowProgress>],
     tracks: &mut [FlowTrack],
-    ctl: Option<&mut TcpStream>,
+    ctl: Option<&mut Stream>,
     limits: Option<&crate::verdict::QualityLimits>,
 ) -> IntervalReport {
     clock.index += 1;
@@ -383,7 +400,7 @@ pub async fn run_session(
     // Control channel handshake.
     let mut ctl = match &opts.control {
         Some(addr) => {
-            let mut s = connect_control(addr, opts.key.as_deref()).await?;
+            let mut s = connect_control_with(addr, opts.key.as_deref(), opts.tls.as_ref()).await?;
             let announce = flows
                 .iter()
                 .enumerate()
@@ -565,8 +582,9 @@ pub async fn remote_launch(
     flows: Vec<FlowSpec>,
     far_control: Option<String>,
     mut stop: watch::Receiver<bool>,
+    tls: Option<&TlsClient>,
 ) -> Result<SessionResult> {
-    let mut s = connect_control(agent, key).await?;
+    let mut s = connect_control_with(agent, key, tls).await?;
     write_msg(
         &mut s,
         &ClientMsg::Launch {

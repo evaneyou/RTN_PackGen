@@ -79,6 +79,8 @@ pub struct ReceiverConfig {
     /// the RTP port from the SDP answer; SRTP keys offered in SDP (SDES) are accepted per call
     /// unless a fixed `srtp_key` is set, in which case offers must carry that key.
     pub sip_port: Option<u16>,
+    /// Serve the control channel over TLS with this certificate.
+    pub tls: Option<crate::tls::TlsServer>,
 }
 
 impl Default for ReceiverConfig {
@@ -96,6 +98,7 @@ impl Default for ReceiverConfig {
             allow_reverse: false,
             srtp_key: None,
             sip_port: None,
+            tls: None,
         }
     }
 }
@@ -416,6 +419,7 @@ struct ControlCtx {
     key: Option<Vec<u8>>,
     allow_launch: bool,
     launch_slots: Semaphore,
+    tls: Option<crate::tls::TlsServer>,
 }
 
 pub struct Receiver {
@@ -424,6 +428,7 @@ pub struct Receiver {
     allow_launch: bool,
     srtp_key: Option<crate::srtp::MasterKey>,
     sip: Option<UdpSocket>,
+    tls: Option<crate::tls::TlsServer>,
     call_keys: Arc<crate::sip::CallKeys>,
     udp: Option<UdpSocket>,
     tcp: Option<TcpListener>,
@@ -507,6 +512,7 @@ impl Receiver {
             allow_launch: cfg.allow_launch,
             srtp_key: cfg.srtp_key,
             sip,
+            tls: cfg.tls,
             call_keys: Arc::default(),
             udp,
             tcp,
@@ -603,6 +609,7 @@ impl Receiver {
                 key: self.auth_key.clone(),
                 allow_launch: self.allow_launch,
                 launch_slots: Semaphore::new(MAX_CONCURRENT_LAUNCHES),
+                tls: self.tls.clone(),
             });
             set.spawn(control_loop(l, ctx));
         }
@@ -784,14 +791,20 @@ async fn control_loop(listener: TcpListener, ctx: Arc<ControlCtx>) -> Result<()>
         tokio::select! {
             r = listener.accept() => {
                 let (stream, _) = r?;
-                conns.spawn(control_conn(stream, ctx.clone()));
+                let ctx = ctx.clone();
+                conns.spawn(async move {
+                    // the TLS handshake runs here, so a slow client cannot stall the accept loop
+                    if let Ok(s) = crate::tls::accept_optional(ctx.tls.as_ref(), stream).await {
+                        control_conn(s, ctx).await;
+                    }
+                });
             }
             Some(_) = conns.join_next(), if !conns.is_empty() => {}
         }
     }
 }
 
-async fn send_error(s: &mut TcpStream, message: impl Into<String>) {
+async fn send_error(s: &mut crate::tls::Stream, message: impl Into<String>) {
     let _ = write_msg(
         s,
         &ServerMsg::Error {
@@ -801,7 +814,7 @@ async fn send_error(s: &mut TcpStream, message: impl Into<String>) {
     .await;
 }
 
-async fn control_conn(mut s: TcpStream, ctx: Arc<ControlCtx>) {
+async fn control_conn(mut s: crate::tls::Stream, ctx: Arc<ControlCtx>) {
     if let Some(key) = &ctx.key {
         match timeout(AUTH_TIMEOUT, auth::server_handshake(&mut s, key)).await {
             Ok(Ok(())) => {}
@@ -870,7 +883,7 @@ async fn control_conn(mut s: TcpStream, ctx: Arc<ControlCtx>) {
 
 /// Returns `false` when the connection should be closed.
 async fn handle_launch(
-    s: &mut TcpStream,
+    s: &mut crate::tls::Stream,
     ctx: &ControlCtx,
     specs: Vec<crate::flow::FlowSpec>,
     control: Option<String>,

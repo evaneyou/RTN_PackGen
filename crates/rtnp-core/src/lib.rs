@@ -25,6 +25,7 @@ pub mod sip;
 pub mod srtp;
 pub mod stats;
 pub mod time;
+pub mod tls;
 mod tos;
 mod track;
 pub mod util;

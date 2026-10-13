@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use rtnp_cli::load_key;
+use rtnp_cli::{load_key, load_tls_server};
 use rtnp_core::logd::{LogdConfig, serve};
 use tokio::net::TcpListener;
 
@@ -21,6 +21,12 @@ struct Args {
     key: Option<String>,
     #[arg(long)]
     key_file: Option<PathBuf>,
+    /// Serve over TLS with this certificate chain (PEM). Needs --tls-key
+    #[arg(long, requires = "tls_key")]
+    tls_cert: Option<PathBuf>,
+    /// Private key (PEM) for --tls-cert
+    #[arg(long, requires = "tls_cert")]
+    tls_key: Option<PathBuf>,
     /// Cut each connection off after this many bytes
     #[arg(long, default_value_t = 1024 * 1024 * 1024)]
     max_bytes_per_conn: u64,
@@ -30,14 +36,16 @@ struct Args {
 async fn main() -> Result<()> {
     let args = Args::parse();
     let key = load_key(&args.key, &args.key_file)?;
+    let tls = load_tls_server(&args.tls_cert, &args.tls_key)?;
     std::fs::create_dir_all(&args.out_dir)
         .with_context(|| format!("cannot create {}", args.out_dir.display()))?;
     let listener = TcpListener::bind(&args.listen)
         .await
         .with_context(|| format!("cannot listen on {}", args.listen))?;
     eprintln!(
-        "log server on {} writing to {} ({})",
+        "log server on {}{} writing to {} ({})",
         listener.local_addr()?,
+        if tls.is_some() { " (TLS)" } else { "" },
         args.out_dir.display(),
         if key.is_some() {
             "authenticated"
@@ -50,6 +58,7 @@ async fn main() -> Result<()> {
         key,
         max_bytes_per_conn: args.max_bytes_per_conn,
         on_event: Arc::new(|m| eprintln!("{m}")),
+        tls,
     };
     tokio::select! {
         r = serve(listener, cfg) => r.context("log server failed"),
