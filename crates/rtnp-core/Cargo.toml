@@ -3,6 +3,9 @@ name = "rtnp-core"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
 description = "Core library for a Rust distributed Internet traffic generator"
 
 [features]
