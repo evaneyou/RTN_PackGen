@@ -114,7 +114,7 @@ pub fn all() -> Vec<Preset> {
         },
         Preset {
             name: "remote-desktop",
-            description: "ESTIMATE of remote desktop / VDI over UDP: bursty, heavy-tailed gaps (mean ~19 ms), ~600 B, ~0.25 Mbit/s",
+            description: "ESTIMATE of remote desktop / VDI over UDP: bursty, heavy-tailed gaps (mean ~17 ms), ~600 B, ~0.27 Mbit/s on average, varies run to run",
             proto: Proto::Udp,
             idt_ms: Dist::Pareto {
                 scale: 5.0,
@@ -129,7 +129,7 @@ pub fn all() -> Vec<Preset> {
         },
         Preset {
             name: "market-data",
-            description: "ESTIMATE of a unicast market-data feed: many small packets with microbursts (mean gap ~2 ms), ~200 B, ~0.85 Mbit/s; sub-ms gaps can run late",
+            description: "ESTIMATE of a unicast market-data feed: many small packets with microbursts (mean gap ~2 ms), ~200 B, ~0.75 Mbit/s; sub-ms gaps can run late",
             proto: Proto::Udp,
             idt_ms: Dist::Pareto {
                 scale: 0.5,
