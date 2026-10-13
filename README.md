@@ -309,7 +309,6 @@ On Ctrl-C a final `{"type":"final","session":..,"flows":[..]}` line carries the 
 
 ## Not implemented
 
-* **DCCP**: removed from recent mainline Linux kernels (the development kernel has none).
 * **Parquet output**: JSONL, CSV and JSON are supported; Parquet would add a large dependency tree.
 * **SIP / SDP / SRTP**, and real codec bitstreams (see Plain-RTP mode).
 * **Encrypted control/log channels** (see Security) and SCTP multi-streaming/multi-homing.
