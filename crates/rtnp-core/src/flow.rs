@@ -785,7 +785,7 @@ mod tests {
             proto = "tcp"
             target = "127.0.0.1:8998"
             rate_pps = 500
-            size = "uniform:200,1200"
+            size = "normal:700,150"
             count = 1000
             "#,
         )

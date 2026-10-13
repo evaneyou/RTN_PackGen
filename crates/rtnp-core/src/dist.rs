@@ -3,7 +3,7 @@
 use std::str::FromStr;
 
 use rand::Rng;
-use rand_distr::{Cauchy, Distribution, Exp, Gamma, Normal, Pareto, Poisson, Weibull};
+use rand_distr::{Distribution, Exp, Normal, Pareto};
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::error::{Error, Result};
@@ -12,42 +12,27 @@ use crate::error::{Error, Result};
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Dist {
     Constant { value: f64 },
-    Uniform { min: f64, max: f64 },
     Exponential { mean: f64 },
     Normal { mean: f64, std_dev: f64 },
     Pareto { scale: f64, shape: f64 },
-    Cauchy { median: f64, scale: f64 },
-    Gamma { shape: f64, scale: f64 },
-    Weibull { scale: f64, shape: f64 },
-    Poisson { mean: f64 },
 }
 
 #[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum Tagged {
     Constant { value: f64 },
-    Uniform { min: f64, max: f64 },
     Exponential { mean: f64 },
     Normal { mean: f64, std_dev: f64 },
     Pareto { scale: f64, shape: f64 },
-    Cauchy { median: f64, scale: f64 },
-    Gamma { shape: f64, scale: f64 },
-    Weibull { scale: f64, shape: f64 },
-    Poisson { mean: f64 },
 }
 
 impl From<Tagged> for Dist {
     fn from(t: Tagged) -> Self {
         match t {
             Tagged::Constant { value } => Dist::Constant { value },
-            Tagged::Uniform { min, max } => Dist::Uniform { min, max },
             Tagged::Exponential { mean } => Dist::Exponential { mean },
             Tagged::Normal { mean, std_dev } => Dist::Normal { mean, std_dev },
             Tagged::Pareto { scale, shape } => Dist::Pareto { scale, shape },
-            Tagged::Cauchy { median, scale } => Dist::Cauchy { median, scale },
-            Tagged::Gamma { shape, scale } => Dist::Gamma { shape, scale },
-            Tagged::Weibull { scale, shape } => Dist::Weibull { scale, shape },
-            Tagged::Poisson { mean } => Dist::Poisson { mean },
         }
     }
 }
@@ -84,8 +69,7 @@ fn params(s: &str, n: usize, usage: &str) -> Result<Vec<f64>> {
 impl FromStr for Dist {
     type Err = Error;
 
-    /// Compact syntax: `const:20`, `uniform:10,50`, `exp:100`, `normal:100,10`,
-    /// `pareto:30,1.5`, `cauchy:50,5`, `gamma:2,10`, `weibull:30,1.5`, `poisson:5`,
+    /// Compact syntax: `const:20`, `exp:100`, `normal:100,10`, `pareto:30,1.5`,
     /// or a bare number meaning constant.
     fn from_str(s: &str) -> Result<Self> {
         let s = s.trim();
@@ -101,13 +85,6 @@ impl FromStr for Dist {
             "const" | "constant" => {
                 let p = params(rest, 1, "const:<value>")?;
                 Dist::Constant { value: p[0] }
-            }
-            "uniform" => {
-                let p = params(rest, 2, "uniform:<min>,<max>")?;
-                Dist::Uniform {
-                    min: p[0],
-                    max: p[1],
-                }
             }
             "exp" | "exponential" => {
                 let p = params(rest, 1, "exp:<mean>")?;
@@ -127,31 +104,6 @@ impl FromStr for Dist {
                     shape: p[1],
                 }
             }
-            "cauchy" => {
-                let p = params(rest, 2, "cauchy:<median>,<scale>")?;
-                Dist::Cauchy {
-                    median: p[0],
-                    scale: p[1],
-                }
-            }
-            "gamma" => {
-                let p = params(rest, 2, "gamma:<shape>,<scale>")?;
-                Dist::Gamma {
-                    shape: p[0],
-                    scale: p[1],
-                }
-            }
-            "weibull" => {
-                let p = params(rest, 2, "weibull:<scale>,<shape>")?;
-                Dist::Weibull {
-                    scale: p[0],
-                    shape: p[1],
-                }
-            }
-            "poisson" => {
-                let p = params(rest, 1, "poisson:<mean>")?;
-                Dist::Poisson { mean: p[0] }
-            }
             other => return Err(Error::Config(format!("unknown distribution '{other}'"))),
         };
         d.build()?; // validate parameters eagerly
@@ -163,14 +115,9 @@ impl FromStr for Dist {
 #[derive(Debug, Clone)]
 pub enum Sampler {
     Constant(f64),
-    Uniform(f64, f64),
     Exp(Exp<f64>),
     Normal(Normal<f64>),
     Pareto(Pareto<f64>),
-    Cauchy(Cauchy<f64>),
-    Gamma(Gamma<f64>),
-    Weibull(Weibull<f64>),
-    Poisson(Poisson<f64>),
 }
 
 impl Dist {
@@ -192,13 +139,6 @@ impl Dist {
                 finite(&[value])?;
                 Sampler::Constant(value)
             }
-            Dist::Uniform { min, max } => {
-                finite(&[min, max])?;
-                if min > max {
-                    return Err(Error::Config("uniform requires min <= max".into()));
-                }
-                Sampler::Uniform(min, max)
-            }
             Dist::Exponential { mean } => {
                 finite(&[mean])?;
                 if mean <= 0.0 {
@@ -214,22 +154,6 @@ impl Dist {
                 finite(&[scale, shape])?;
                 Sampler::Pareto(Pareto::new(scale, shape).map_err(|e| bad("pareto", &e))?)
             }
-            Dist::Cauchy { median, scale } => {
-                finite(&[median, scale])?;
-                Sampler::Cauchy(Cauchy::new(median, scale).map_err(|e| bad("cauchy", &e))?)
-            }
-            Dist::Gamma { shape, scale } => {
-                finite(&[shape, scale])?;
-                Sampler::Gamma(Gamma::new(shape, scale).map_err(|e| bad("gamma", &e))?)
-            }
-            Dist::Weibull { scale, shape } => {
-                finite(&[scale, shape])?;
-                Sampler::Weibull(Weibull::new(scale, shape).map_err(|e| bad("weibull", &e))?)
-            }
-            Dist::Poisson { mean } => {
-                finite(&[mean])?;
-                Sampler::Poisson(Poisson::new(mean).map_err(|e| bad("poisson", &e))?)
-            }
         })
     }
 }
@@ -238,20 +162,9 @@ impl Sampler {
     pub fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> f64 {
         match self {
             Sampler::Constant(v) => *v,
-            Sampler::Uniform(a, b) => {
-                if a == b {
-                    *a
-                } else {
-                    rng.random_range(*a..*b)
-                }
-            }
             Sampler::Exp(d) => d.sample(rng),
             Sampler::Normal(d) => d.sample(rng),
             Sampler::Pareto(d) => d.sample(rng),
-            Sampler::Cauchy(d) => d.sample(rng),
-            Sampler::Gamma(d) => d.sample(rng),
-            Sampler::Weibull(d) => d.sample(rng),
-            Sampler::Poisson(d) => d.sample(rng),
         }
     }
 
@@ -281,12 +194,13 @@ mod tests {
             Dist::Exponential { mean: 50.0 }
         );
         assert_eq!(
-            "uniform:10,50".parse::<Dist>().unwrap(),
-            Dist::Uniform {
-                min: 10.0,
-                max: 50.0
+            "normal:50,5".parse::<Dist>().unwrap(),
+            Dist::Normal {
+                mean: 50.0,
+                std_dev: 5.0
             }
         );
+        assert!("uniform:10,50".parse::<Dist>().is_err());
         assert!("pareto:1".parse::<Dist>().is_err());
         assert!("exp:-3".parse::<Dist>().is_err());
         assert!("bogus:1".parse::<Dist>().is_err());

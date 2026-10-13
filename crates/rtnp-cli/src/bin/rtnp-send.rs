@@ -168,7 +168,7 @@ struct FlowArgs {
     /// Built-in preset, see `rtnp-send presets`
     #[arg(long)]
     preset: Option<String>,
-    /// Inter-departure time in ms: 20, const:20, uniform:10,50, exp:50, normal:50,5, pareto:30,1.5, ...
+    /// Inter-departure time in ms: 20, const:20, exp:50, normal:50,5, pareto:30,1.5
     #[arg(long)]
     idt: Option<Dist>,
     /// Packet size in bytes (same syntax as --idt)

@@ -23,6 +23,6 @@ name = "bursty-udp"
 proto = "udp"
 target = "127.0.0.1:8998"
 idt_ms = { kind = "pareto", scale = 2.0, shape = 1.6 }
-size = { kind = "uniform", min = 64.0, max = 1200.0 }
+size = { kind = "normal", mean = 600.0, std_dev = 200.0 }
 duration_ms = 3000
 seed = 1234

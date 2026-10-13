@@ -30,8 +30,9 @@ target/release/rtnp-decode rx.jsonl --flow 1 -i 1000
 ```
 
 Distribution syntax (for `--idt` in ms and `--size` in bytes, and for TOML values): a bare number, or
-`const:v`, `uniform:min,max`, `exp:mean`, `normal:mean,sd`, `pareto:scale,shape`, `cauchy:median,scale`,
-`gamma:shape,scale`, `weibull:scale,shape`, `poisson:mean`. TOML also accepts tables such as
+`const:v`, `exp:mean`, `normal:mean,sd`, or `pareto:scale,shape`. Constant suits codec traffic,
+exponential random arrivals and talk/silence lengths, Pareto bursty heavy-tailed gaps, and normal sizes
+that cluster around an average. TOML also accepts tables such as
 `{ kind = "pareto", scale = 2.0, shape = 1.6 }`.
 
 Defaults: 1000 packets/s, 512-byte packets, 10 s.
