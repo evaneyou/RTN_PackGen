@@ -4,6 +4,7 @@
 //! * [`sender`] generates it, [`receiver`] measures it, [`control`] links the two.
 //! * [`log`] and [`report`] record and analyse results.
 
+pub mod audio;
 pub mod auth;
 pub mod client;
 pub mod control;
@@ -20,8 +21,11 @@ pub mod report;
 pub mod rtcp;
 mod rtpsend;
 pub mod sender;
+pub mod sip;
+pub mod srtp;
 pub mod stats;
 pub mod time;
+pub mod tls;
 mod tos;
 mod track;
 pub mod util;

@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand};
-use rtnp_cli::{fmt_interval, fmt_report, load_key, parse_duration};
+use rtnp_cli::{fmt_interval, fmt_report, load_key, load_tls_client, parse_duration};
 use rtnp_core::client::{SessionOptions, remote_launch, run_session};
 use rtnp_core::dist::Dist;
 use rtnp_core::flow::{
@@ -35,6 +35,8 @@ enum Cmd {
     Flow(FlowArgs),
     /// List built-in traffic presets
     Presets,
+    /// Print a fresh random SRTP master key (60 hex characters)
+    SrtpKey,
     /// Test whether a priority queue protects voice: run the same call marked (EF) and unmarked
     /// under identical background load and compare them
     Compare(CompareArgs),
@@ -52,6 +54,10 @@ struct CompareArgs {
     key: Option<String>,
     #[arg(long)]
     key_file: Option<PathBuf>,
+    /// Connect to control channels, agents and log servers over TLS, trusting the CA
+    /// certificate(s) in this PEM file. The server's certificate must name the host you connect to
+    #[arg(long)]
+    tls_ca: Option<PathBuf>,
     /// Length of each phase
     #[arg(long, short = 'd', default_value = "20s", value_parser = parse_duration)]
     duration: Duration,
@@ -99,6 +105,10 @@ struct Common {
     /// Read the shared key from a file
     #[arg(long)]
     key_file: Option<PathBuf>,
+    /// Connect to control channels, agents and log servers over TLS, trusting the CA
+    /// certificate(s) in this PEM file. The server's certificate must name the host you connect to
+    #[arg(long)]
+    tls_ca: Option<PathBuf>,
     /// Write JSONL records to this file
     #[arg(long, short = 'l')]
     log: Option<PathBuf>,
@@ -199,7 +209,8 @@ struct FlowArgs {
     /// owd (one-way delay, default) or rtt (the receiver reflects packets)
     #[arg(long)]
     meter: Option<Meter>,
-    /// Packet body: zero (default), random, pattern:<hex> or file:<path>
+    /// Packet body: zero (default), random, pattern:<hex>, file:<path>, or real G.711 audio with
+    /// tone[:<hz>] or wav:<path> (8 kHz mono 16-bit; plain-RTP G.711 only)
     #[arg(long)]
     payload: Option<Payload>,
     /// Write an RTP header for this codec: g711 (µ-law), g711a (A-law), g729, g723 (UDP only)
@@ -250,6 +261,23 @@ struct FlowArgs {
     /// Set the RTP marker bit on the first packet (plain-RTP voice), as most phones do
     #[arg(long)]
     first_marker: bool,
+    /// Encrypt the RTP stream with SRTP (AES_CM_128_HMAC_SHA1_80). The 30-byte master key and
+    /// salt as 60 hex or 40 base64 characters; make one with `rtnp-send srtp-key`. Prefer
+    /// RTNP_SRTP_KEY or --srtp-key-file over this flag, which shows in the process list.
+    /// Needs --wire rtp; the receiver must use the same key.
+    #[arg(long, env = "RTNP_SRTP_KEY", hide_env_values = true)]
+    srtp_key: Option<String>,
+    /// Read the SRTP master key from a file
+    #[arg(long)]
+    srtp_key_file: Option<PathBuf>,
+    /// Set the call up with SIP first (INVITE, ACK, BYE) with an SDP offer. The target is then the
+    /// receiver's SIP port (rtnp-recv --sip-port) and media goes to the port in its answer.
+    /// Plain-RTP voice only
+    #[arg(long)]
+    sip: bool,
+    /// With --sip: encrypt with SRTP using a fresh random key sent in the SDP (SDES)
+    #[arg(long, requires = "sip", conflicts_with_all = ["srtp_key", "srtp_key_file"])]
+    srtp: bool,
     #[command(flatten)]
     common: Common,
 }
@@ -261,6 +289,10 @@ async fn main() -> Result<()> {
             for p in preset::all() {
                 println!("{:<16} {:<4} {}", p.name, p.proto.as_str(), p.description);
             }
+            Ok(())
+        }
+        Cmd::SrtpKey => {
+            println!("{}", rtnp_core::srtp::MasterKey::random().to_hex());
             Ok(())
         }
         Cmd::Compare(a) => compare(a).await,
@@ -310,6 +342,12 @@ async fn main() -> Result<()> {
                 vad_silence_ms: a.vad_silence,
                 rtcp_interval_ms: a.rtcp_interval.map(|d| d.as_millis() as u64),
                 first_marker: a.first_marker,
+                sip: a.sip,
+                srtp: a.srtp,
+                srtp_key: rtnp_core::srtp::load_key(
+                    a.srtp_key.as_deref(),
+                    a.srtp_key_file.as_deref(),
+                )?,
             };
             execute(vec![spec], a.common).await
         }
@@ -332,9 +370,13 @@ fn emit(text: String) {
 
 async fn execute(specs: Vec<FlowSpec>, mut c: Common) -> Result<()> {
     let key = load_key(&c.key, &c.key_file)?;
+    let tls = load_tls_client(&c.tls_ca)?;
     let limits = c.limits()?;
     if limits.is_some() && c.agent.is_some() {
         bail!("--max-rtt/--max-jitter/--max-loss/--expect-dscp are not supported with --agent");
+    }
+    if c.agent.is_some() && specs.iter().any(|s| s.srtp_key.is_some()) {
+        bail!("SRTP keys are not sent to remote agents: run SRTP flows from this host");
     }
     let forever = specs.iter().any(|s| s.forever);
     if forever && c.interval.is_none() {
@@ -369,7 +411,15 @@ async fn execute(specs: Vec<FlowSpec>, mut c: Common) -> Result<()> {
             s.resolve(i)
                 .map_err(|e| anyhow::anyhow!("invalid flow {}: {e}", i + 1))?;
         }
-        remote_launch(agent, key.as_deref(), specs, c.control.clone(), stop_rx).await?
+        remote_launch(
+            agent,
+            key.as_deref(),
+            specs,
+            c.control.clone(),
+            stop_rx,
+            tls.as_ref(),
+        )
+        .await?
     } else {
         let flows: Vec<ResolvedFlow> = specs
             .iter()
@@ -381,14 +431,17 @@ async fn execute(specs: Vec<FlowSpec>, mut c: Common) -> Result<()> {
             (Some(p), _) => LogSink::to_file(p)
                 .await
                 .with_context(|| format!("cannot open log {}", p.display()))?,
-            (None, Some(addr)) => LogSink::to_remote(addr, &c.log_tag, key.as_deref())
-                .await
-                .with_context(|| format!("cannot reach log server {addr}"))?,
+            (None, Some(addr)) => {
+                LogSink::to_remote_with(addr, &c.log_tag, key.as_deref(), tls.as_ref())
+                    .await
+                    .with_context(|| format!("cannot reach log server {addr}"))?
+            }
             (None, None) => LogSink::none(),
         };
         let mut opts = SessionOptions::new(sink.handle());
         opts.control = c.control.clone();
         opts.key = key.clone();
+        opts.tls = tls.clone();
         opts.log_packets = c.log_packets;
         opts.grace = c.grace;
         opts.limits = limits;
@@ -480,6 +533,7 @@ async fn compare(a: CompareArgs) -> Result<()> {
         bail!("--background-kbps must be positive and --background-size at least 100");
     }
     let key = load_key(&a.key, &a.key_file)?;
+    let tls = load_tls_client(&a.tls_ca)?;
     let (stop_tx, stop_rx) = watch::channel(false);
     tokio::spawn(async move {
         let _ = tokio::signal::ctrl_c().await;
@@ -543,6 +597,7 @@ async fn compare(a: CompareArgs) -> Result<()> {
         let mut opts = SessionOptions::new(LogSink::none().handle());
         opts.control = Some(a.control.clone());
         opts.key = key.clone();
+        opts.tls = tls.clone();
         opts.grace = a.grace;
         let res = run_session(flows, opts, stop_rx.clone()).await?;
         for e in &res.errors {

@@ -72,6 +72,15 @@ pub struct ReceiverConfig {
     /// bounded (10-200 ms cadence, up to 1400-byte packets), goes only to the address its
     /// forward stream came from, and stops 5 s after that stream goes quiet.
     pub allow_reverse: bool,
+    /// Expect SRTP (AES_CM_128_HMAC_SHA1_80) on the UDP data port with this master key. Packets
+    /// that fail authentication, and plain RTP, are counted as malformed and dropped.
+    pub srtp_key: Option<crate::srtp::MasterKey>,
+    /// Answer SIP INVITEs on this UDP port (`Some(0)` picks one). Needs `udp_port`. Callers learn
+    /// the RTP port from the SDP answer; SRTP keys offered in SDP (SDES) are accepted per call
+    /// unless a fixed `srtp_key` is set, in which case offers must carry that key.
+    pub sip_port: Option<u16>,
+    /// Serve the control channel over TLS with this certificate.
+    pub tls: Option<crate::tls::TlsServer>,
 }
 
 impl Default for ReceiverConfig {
@@ -87,6 +96,9 @@ impl Default for ReceiverConfig {
             auth_key: None,
             allow_launch: false,
             allow_reverse: false,
+            srtp_key: None,
+            sip_port: None,
+            tls: None,
         }
     }
 }
@@ -407,12 +419,17 @@ struct ControlCtx {
     key: Option<Vec<u8>>,
     allow_launch: bool,
     launch_slots: Semaphore,
+    tls: Option<crate::tls::TlsServer>,
 }
 
 pub struct Receiver {
     one_shot: bool,
     auth_key: Option<Vec<u8>>,
     allow_launch: bool,
+    srtp_key: Option<crate::srtp::MasterKey>,
+    sip: Option<UdpSocket>,
+    tls: Option<crate::tls::TlsServer>,
+    call_keys: Arc<crate::sip::CallKeys>,
     udp: Option<UdpSocket>,
     tcp: Option<TcpListener>,
     sctp: Option<TcpListener>,
@@ -462,6 +479,17 @@ impl Receiver {
             Some(p) => Some(UdpSocket::bind((cfg.bind, p)).await?),
             None => None,
         };
+        let sip = match cfg.sip_port {
+            Some(p) => {
+                if udp.is_none() {
+                    return Err(Error::Config(
+                        "the SIP responder needs a UDP data port".into(),
+                    ));
+                }
+                Some(UdpSocket::bind((cfg.bind, p)).await?)
+            }
+            None => None,
+        };
         let tcp = match cfg.tcp_port {
             Some(p) => Some(TcpListener::bind((cfg.bind, p)).await?),
             None => None,
@@ -482,6 +510,10 @@ impl Receiver {
             one_shot: cfg.one_shot,
             auth_key: cfg.auth_key,
             allow_launch: cfg.allow_launch,
+            srtp_key: cfg.srtp_key,
+            sip,
+            tls: cfg.tls,
+            call_keys: Arc::default(),
             udp,
             tcp,
             sctp,
@@ -500,6 +532,15 @@ impl Receiver {
 
     pub fn udp_addr(&self) -> Option<SocketAddr> {
         self.udp.as_ref().and_then(|s| s.local_addr().ok())
+    }
+
+    pub fn sip_addr(&self) -> Option<SocketAddr> {
+        self.sip.as_ref().and_then(|s| s.local_addr().ok())
+    }
+
+    /// Calls with an SRTP key learned from SDP that have not hung up yet.
+    pub fn call_keys(&self) -> Arc<crate::sip::CallKeys> {
+        self.call_keys.clone()
     }
 
     pub fn tcp_addr(&self) -> Option<SocketAddr> {
@@ -525,8 +566,25 @@ impl Receiver {
     /// Serve until `shutdown` resolves, a listener fails, or (in one-shot mode) a session completes.
     pub async fn serve<F: Future<Output = ()>>(self, shutdown: F) -> Result<()> {
         let mut set: JoinSet<Result<()>> = JoinSet::new();
+        let srtp = self.srtp_key.as_ref().map(crate::srtp::SrtpReceiver::new);
+        if let (Some(s), Some(u)) = (
+            self.sip,
+            self.udp.as_ref().and_then(|u| u.local_addr().ok()),
+        ) {
+            let policy = crate::sip::Policy {
+                media_port: u.port(),
+                static_key: self.srtp_key.clone(),
+            };
+            set.spawn(crate::sip::serve(s, policy, self.call_keys.clone()));
+        }
         if let Some(s) = self.udp {
-            set.spawn(udp_loop(s, self.shared.clone(), self.log.clone()));
+            set.spawn(udp_loop(
+                s,
+                self.shared.clone(),
+                self.log.clone(),
+                srtp,
+                self.call_keys.clone(),
+            ));
         }
         if let Some(l) = self.tcp {
             set.spawn(stream_accept_loop(
@@ -551,6 +609,7 @@ impl Receiver {
                 key: self.auth_key.clone(),
                 allow_launch: self.allow_launch,
                 launch_slots: Semaphore::new(MAX_CONCURRENT_LAUNCHES),
+                tls: self.tls.clone(),
             });
             set.spawn(control_loop(l, ctx));
         }
@@ -593,7 +652,13 @@ fn rtcp_reply(pkt: &[u8]) -> Option<Vec<u8>> {
     None
 }
 
-async fn udp_loop(sock: UdpSocket, shared: Arc<Shared>, log: LogHandle) -> Result<()> {
+async fn udp_loop(
+    sock: UdpSocket,
+    shared: Arc<Shared>,
+    log: LogHandle,
+    mut srtp: Option<crate::srtp::SrtpReceiver>,
+    call_keys: Arc<crate::sip::CallKeys>,
+) -> Result<()> {
     crate::tos::enable_recv_tos(&sock);
     let sock = Arc::new(sock);
     let mut buf = vec![0u8; 65_536];
@@ -615,6 +680,24 @@ async fn udp_loop(sock: UdpSocket, shared: Arc<Shared>, log: LogHandle) -> Resul
         }
         // Plain RTP starts with version 2 (0b10..); our own header starts with 0x44 ('D').
         if n >= RTP_HEADER_LEN && buf[0] >> 6 == 2 {
+            let n = match srtp.as_mut() {
+                Some(rx) => match rx.unprotect(&mut buf[..n]) {
+                    Some(len) => len,
+                    None => {
+                        shared.malformed.fetch_add(1, Ordering::Relaxed);
+                        continue;
+                    }
+                },
+                // SRTP learned from a SIP call, looked up by the source the caller announced
+                None => match call_keys.unprotect(peer, &mut buf[..n]) {
+                    Some(Some(len)) => len,
+                    Some(None) => {
+                        shared.malformed.fetch_add(1, Ordering::Relaxed);
+                        continue;
+                    }
+                    None => n,
+                },
+            };
             shared.record_rtp(&sock, &log, peer, &buf[..n], rx_ns, tos);
             continue;
         }
@@ -708,14 +791,20 @@ async fn control_loop(listener: TcpListener, ctx: Arc<ControlCtx>) -> Result<()>
         tokio::select! {
             r = listener.accept() => {
                 let (stream, _) = r?;
-                conns.spawn(control_conn(stream, ctx.clone()));
+                let ctx = ctx.clone();
+                conns.spawn(async move {
+                    // the TLS handshake runs here, so a slow client cannot stall the accept loop
+                    if let Ok(s) = crate::tls::accept_optional(ctx.tls.as_ref(), stream).await {
+                        control_conn(s, ctx).await;
+                    }
+                });
             }
             Some(_) = conns.join_next(), if !conns.is_empty() => {}
         }
     }
 }
 
-async fn send_error(s: &mut TcpStream, message: impl Into<String>) {
+async fn send_error(s: &mut crate::tls::Stream, message: impl Into<String>) {
     let _ = write_msg(
         s,
         &ServerMsg::Error {
@@ -725,7 +814,7 @@ async fn send_error(s: &mut TcpStream, message: impl Into<String>) {
     .await;
 }
 
-async fn control_conn(mut s: TcpStream, ctx: Arc<ControlCtx>) {
+async fn control_conn(mut s: crate::tls::Stream, ctx: Arc<ControlCtx>) {
     if let Some(key) = &ctx.key {
         match timeout(AUTH_TIMEOUT, auth::server_handshake(&mut s, key)).await {
             Ok(Ok(())) => {}
@@ -794,7 +883,7 @@ async fn control_conn(mut s: TcpStream, ctx: Arc<ControlCtx>) {
 
 /// Returns `false` when the connection should be closed.
 async fn handle_launch(
-    s: &mut TcpStream,
+    s: &mut crate::tls::Stream,
     ctx: &ControlCtx,
     specs: Vec<crate::flow::FlowSpec>,
     control: Option<String>,

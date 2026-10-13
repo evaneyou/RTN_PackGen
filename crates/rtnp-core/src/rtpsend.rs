@@ -45,10 +45,23 @@ struct Tx {
     bytes: u64,
     late: u64,
     errors: u64,
+    /// SRTP: session keys and the rollover-counter tracker.
+    srtp: Option<(crate::srtp::SessionKeys, crate::srtp::TxIndex)>,
 }
 
 impl Tx {
-    async fn send(&mut self, pkt: &[u8]) {
+    /// Send `buf[..len]`; with SRTP the payload is encrypted in place and a tag appended
+    /// (`buf` needs `TAG_LEN` spare bytes).
+    async fn send(&mut self, buf: &mut [u8], len: usize) {
+        let len = match &self.srtp {
+            Some((keys, idx)) => {
+                // sequence numbers advance on every attempt, sent or not
+                let roc = idx.roc(self.packets.wrapping_add(self.errors));
+                keys.protect(buf, len, roc)
+            }
+            None => len,
+        };
+        let pkt = &buf[..len];
         let sent = match self.dest {
             Some(d) => crate::tos::send_to(&self.sock, pkt, d, self.tos).await,
             None => self.sock.send(pkt).await,
@@ -90,6 +103,28 @@ pub(crate) async fn run(
         "[::]:0"
     };
     let sock = UdpSocket::bind(bind).await?;
+    // With SIP the target is the callee's SIP port; media goes where the answer says.
+    let mut call = None;
+    let addr = if cfg.sip {
+        let codec = cfg.rtp.expect("resolve guarantees a codec for SIP calls");
+        let ptime_ms = match &cfg.idt_ms {
+            crate::dist::Dist::Constant { value } => Some(value.round() as u32),
+            _ => None,
+        };
+        let c = crate::sip::invite(crate::sip::Offer {
+            sip_target: addr,
+            media_port: sock.local_addr()?.port(),
+            pt: codec.payload_type(),
+            ptime_ms,
+            key: cfg.srtp_key.as_ref(),
+        })
+        .await?;
+        let media = c.media;
+        call = Some(c);
+        media
+    } else {
+        addr
+    };
     apply_socket_opts(&sock, &addr, &cfg)?;
     sock.connect(addr).await?;
 
@@ -143,6 +178,10 @@ pub(crate) async fn run(
         bytes: 0,
         late: 0,
         errors: 0,
+        srtp: cfg
+            .srtp_key
+            .as_ref()
+            .map(|k| (k.session(), crate::srtp::TxIndex::new(seq0))),
     };
 
     let started = Instant::now();
@@ -158,6 +197,9 @@ pub(crate) async fn run(
         // let the last return packets (and RTCP answers) arrive before we stop listening
         tokio::time::sleep(REVERSE_DRAIN).await;
         reader.abort();
+    }
+    if let Some(c) = call {
+        c.bye().await;
     }
     let sent = tx.packets;
     log.send(LogRecord::FlowEnd {
@@ -291,6 +333,8 @@ pub(crate) async fn run_reverse(
         bidirectional: false,
         rtcp_interval: None,
         first_marker: false,
+        srtp_key: None,
+        sip: false,
     };
     let mut tx = Tx {
         sock,
@@ -305,6 +349,7 @@ pub(crate) async fn run_reverse(
         bytes: 0,
         late: 0,
         errors: 0,
+        srtp: None,
     };
     let seq0: u16 = rand::random();
     let ts0: u32 = rand::random();
@@ -329,8 +374,8 @@ async fn run_audio(
 
     pacer.restart();
     while let Some(size) = pacer.wait(stop).await {
-        if buf.len() < size {
-            buf.resize(size, 0);
+        if buf.len() < size + crate::srtp::TAG_LEN {
+            buf.resize(size + crate::srtp::TAG_LEN, 0);
         }
         // 8 kHz clock; follows the schedule, so silences show up as timestamp jumps (RFC 3551)
         let ticks = ((pacer.scheduled_offset().as_nanos() + 62_500) / 125_000) as u32;
@@ -345,7 +390,7 @@ async fn run_audio(
         pacer.new_talkspurt = false;
         payload.fill(&mut buf[RTP_HEADER_LEN..size]);
         tx.late = pacer.late;
-        tx.send(&buf[..size]).await;
+        tx.send(&mut buf, size).await;
         pacer.advance(size);
     }
     tx.late = pacer.late;
@@ -367,7 +412,7 @@ async fn run_video(
     let p_size = v.p_bytes.build()?;
     let frame_dt = Duration::from_secs_f64(1.0 / v.fps);
     let mut payload = PayloadGen::new(&cfg.payload);
-    let mut buf = vec![0u8; RTP_HEADER_LEN + v.payload_bytes];
+    let mut buf = vec![0u8; RTP_HEADER_LEN + v.payload_bytes + crate::srtp::TAG_LEN];
     let mut start = Instant::now();
     let mut frame = 0u64;
     let mut seq = 0u64; // sequence counter including packets that failed to send
@@ -426,7 +471,7 @@ async fn run_video(
                 ssrc,
             );
             payload.fill(&mut buf[RTP_HEADER_LEN..RTP_HEADER_LEN + chunk]);
-            tx.send(&buf[..RTP_HEADER_LEN + chunk]).await;
+            tx.send(&mut buf, RTP_HEADER_LEN + chunk).await;
             seq += 1;
         }
         frame += 1;

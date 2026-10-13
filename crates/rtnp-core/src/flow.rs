@@ -259,6 +259,11 @@ pub enum Payload {
     Pattern(Vec<u8>),
     /// Contents of a local file, repeated as needed (`file:/path`).
     File(String),
+    /// Real G.711 audio: a sine tone (`tone` = 440 Hz, or `tone:<hz>`). Plain-RTP G.711 only.
+    Tone(u32),
+    /// Real G.711 audio from an 8 kHz mono 16-bit WAV file (`wav:/path`), looped. Plain-RTP
+    /// G.711 only.
+    Wav(String),
 }
 
 impl FromStr for Payload {
@@ -268,6 +273,7 @@ impl FromStr for Payload {
         match s.to_ascii_lowercase().as_str() {
             "zero" => return Ok(Payload::Zero),
             "random" => return Ok(Payload::Random),
+            "tone" => return Ok(Payload::Tone(440)),
             _ => {}
         }
         if let Some(h) = s.strip_prefix("pattern:") {
@@ -282,8 +288,22 @@ impl FromStr for Payload {
             }
             return Ok(Payload::File(p.to_string()));
         }
+        if let Some(h) = s.strip_prefix("tone:") {
+            let hz = h
+                .parse::<u32>()
+                .ok()
+                .filter(|hz| (1..=3999).contains(hz))
+                .ok_or_else(|| Error::Config("tone:<hz> needs 1-3999".into()))?;
+            return Ok(Payload::Tone(hz));
+        }
+        if let Some(p) = s.strip_prefix("wav:") {
+            if p.is_empty() {
+                return Err(Error::Config("wav payload needs a path".into()));
+            }
+            return Ok(Payload::Wav(p.to_string()));
+        }
         Err(Error::Config(format!(
-            "unknown payload '{s}' (zero, random, pattern:<hex>, file:<path>)"
+            "unknown payload '{s}' (zero, random, pattern:<hex>, file:<path>, tone[:<hz>], wav:<path>)"
         )))
     }
 }
@@ -295,6 +315,8 @@ impl std::fmt::Display for Payload {
             Payload::Random => write!(f, "random"),
             Payload::Pattern(b) => write!(f, "pattern:{}", hex_encode(b)),
             Payload::File(p) => write!(f, "file:{p}"),
+            Payload::Tone(hz) => write!(f, "tone:{hz}"),
+            Payload::Wav(p) => write!(f, "wav:{p}"),
         }
     }
 }
@@ -363,6 +385,19 @@ pub struct FlowSpec {
     pub first_marker: bool,
     /// `rtnp` (default) or `rtp`: plain RTP on the wire, see [`Wire::Rtp`].
     pub wire: Option<Wire>,
+    /// Encrypt the RTP stream with SRTP (AES_CM_128_HMAC_SHA1_80) using this master key (60 hex
+    /// or 40 base64 characters). Plain-RTP flows only. Never serialised, so it is not sent to
+    /// remote agents.
+    #[serde(default, skip_serializing)]
+    pub srtp_key: Option<crate::srtp::MasterKey>,
+    /// SRTP with a fresh random key per call, sent to the receiver in the SIP/SDP offer (SDES).
+    /// Needs `sip`; conflicts with `srtp_key`.
+    #[serde(default)]
+    pub srtp: bool,
+    /// Set the call up with SIP first: INVITE/ACK to `target` (the receiver's SIP port), media to
+    /// the port in the SDP answer, BYE at the end. Plain-RTP voice only.
+    #[serde(default)]
+    pub sip: bool,
     /// Synthetic video stream (implies `wire = "rtp"`); see [`VideoSpec`].
     pub video: Option<VideoSpec>,
     /// Voice-activity detection: alternate talkspurts and silences.
@@ -429,6 +464,10 @@ pub struct ResolvedFlow {
     pub rtcp_interval: Option<Duration>,
     /// Mark the first RTP packet of the stream (plain-RTP voice only).
     pub first_marker: bool,
+    /// SRTP master key (plain RTP only); adds a 10-byte tag to every packet.
+    pub srtp_key: Option<crate::srtp::MasterKey>,
+    /// Set the call up with SIP/SDP; `target` is then the receiver's SIP address.
+    pub sip: bool,
 }
 
 /// Restrictions applied when resolving flows that came from an untrusted peer.
@@ -621,6 +660,33 @@ impl FlowSpec {
                 "first_marker needs plain-RTP voice (wire = rtp and an rtp codec)".into(),
             ));
         }
+        if self.sip
+            && (wire != Wire::Rtp || video.is_some() || rtp.is_none() || proto != Proto::Udp)
+        {
+            return Err(Error::Config(
+                "sip needs plain-RTP voice over UDP (wire = rtp and an rtp codec)".into(),
+            ));
+        }
+        if self.srtp && (!self.sip || self.srtp_key.is_some()) {
+            return Err(Error::Config(
+                "srtp = true needs sip = true (the key travels in the SDP) and no srtp_key; with a fixed key use srtp_key".into(),
+            ));
+        }
+        let srtp_key = if self.srtp {
+            Some(crate::srtp::MasterKey::random())
+        } else {
+            self.srtp_key.clone()
+        };
+        if srtp_key.is_some() {
+            if wire != Wire::Rtp {
+                return Err(Error::Config("srtp needs plain RTP (wire = rtp)".into()));
+            }
+            if self.bidirectional {
+                return Err(Error::Config(
+                    "srtp does not support bidirectional calls yet".into(),
+                ));
+            }
+        }
         if self.bidirectional {
             if wire != Wire::Rtp || video.is_some() || rtp.is_none() {
                 return Err(Error::Config(
@@ -724,6 +790,20 @@ impl FlowSpec {
                 PayloadData::Bytes(Arc::new(v))
             }
             Payload::Pattern(b) => PayloadData::Bytes(Arc::new(b)),
+            Payload::Tone(hz) => {
+                PayloadData::Bytes(Arc::new(crate::audio::tone(hz, audio_codec(wire, rtp)?)?))
+            }
+            Payload::Wav(path) => {
+                if !opts.allow_file_payload {
+                    return Err(Error::Config(
+                        "wav payloads are not allowed for this flow source".into(),
+                    ));
+                }
+                PayloadData::Bytes(Arc::new(crate::audio::wav_file(
+                    &path,
+                    audio_codec(wire, rtp)?,
+                )?))
+            }
             Payload::File(path) => {
                 if !opts.allow_file_payload {
                     return Err(Error::Config(
@@ -766,7 +846,20 @@ impl FlowSpec {
             bidirectional: self.bidirectional,
             rtcp_interval,
             first_marker: self.first_marker,
+            srtp_key,
+            sip: self.sip,
         })
+    }
+}
+
+/// Real audio needs plain-RTP G.711 voice.
+fn audio_codec(wire: Wire, rtp: Option<Codec>) -> Result<Codec> {
+    match (wire, rtp) {
+        (Wire::Rtp, Some(c @ (Codec::G711 | Codec::G711a))) => Ok(c),
+        _ => Err(Error::Config(
+            "tone/wav audio needs plain-RTP G.711 voice (wire = rtp and rtp = g711 or g711a)"
+                .into(),
+        )),
     }
 }
 
