@@ -238,7 +238,10 @@ On Ctrl-C a final `{"type":"final","session":..,"flows":[..]}` line carries the 
   mean absolute delay difference and as the RFC 3550 smoothed value.
 * **Loss** is derived from sequence gaps at the receiver, and against the sender's count when both logs
   are decoded together. Duplicates are not tracked separately.
-* **Presets** (`rtnp-send presets`) are approximations of typical VoIP traffic (G.711, G.711 A-law, G.729, G.723.1).
+* **Presets** (`rtnp-send presets`) are approximations. The voice presets are G.711, G.711 A-law, G.729 and G.723.1. `fortnite` (30 packets/s,
+  ~250 B) and `call-of-duty` (~22 packets/s, ~900 B) are **estimates** built from public tick-rate and
+  data-use figures, not from packet captures, and each sends one stream rather than the different traffic
+  per direction a real game uses.
 * **ICMP** needs privileges (root, `CAP_NET_RAW`, or a suitable `net.ipv4.ping_group_range`).
 * **SCTP is implemented but has not been run:** the development kernel has no SCTP support, so only the
   "unsupported" path is tested. Please try it on a host with `sctp` loaded before relying on it.

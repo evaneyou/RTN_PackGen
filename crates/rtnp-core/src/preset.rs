@@ -1,6 +1,7 @@
 //! Built-in traffic presets.
 //!
-//! These are *approximations* of common application traffic patterns. Sizes are the full UDP/TCP
+//! These are *approximations* of common application traffic patterns (the game presets are
+//! estimates from public figures, not captures). Sizes are the full UDP/TCP
 //! payload including the 32-byte measurement header (and the 12-byte RTP header for
 //! voice), so the codec payload matches the real codec; on the wire a voice packet is
 //! therefore 32 bytes larger than a real VoIP packet, unless the flow uses `wire = rtp`,
@@ -54,6 +55,32 @@ pub fn all() -> Vec<Preset> {
             idt_ms: Dist::Constant { value: 30.0 },
             size: Dist::Constant { value: 68.0 },
             rtp: Some(Codec::G723),
+        },
+        // The game presets are ESTIMATES built from public figures (server update rates and
+        // reported data use), not from packet captures. Each is a single stream; real games
+        // send different traffic in each direction. Replace with measured values when captures
+        // are available.
+        Preset {
+            name: "fortnite",
+            description: "ESTIMATE of Fortnite gameplay: 30 updates/s (30 Hz server tick), ~250 B, ~60 kbps",
+            proto: Proto::Udp,
+            idt_ms: Dist::Constant { value: 33.33 },
+            size: Dist::Normal {
+                mean: 250.0,
+                std_dev: 60.0,
+            },
+            rtp: None,
+        },
+        Preset {
+            name: "call-of-duty",
+            description: "ESTIMATE of Call of Duty / Warzone gameplay: ~22 updates/s (20-25 Hz tick), ~900 B, ~160 kbps",
+            proto: Proto::Udp,
+            idt_ms: Dist::Constant { value: 45.0 },
+            size: Dist::Normal {
+                mean: 900.0,
+                std_dev: 150.0,
+            },
+            rtp: None,
         },
     ]
 }
