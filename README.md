@@ -30,8 +30,9 @@ target/release/rtnp-decode rx.jsonl --flow 1 -i 1000
 ```
 
 Distribution syntax (for `--idt` in ms and `--size` in bytes, and for TOML values): a bare number, or
-`const:v`, `uniform:min,max`, `exp:mean`, `normal:mean,sd`, `pareto:scale,shape`, `cauchy:median,scale`,
-`gamma:shape,scale`, `weibull:scale,shape`, `poisson:mean`. TOML also accepts tables such as
+`const:v`, `exp:mean`, `normal:mean,sd`, or `pareto:scale,shape`. Constant suits codec traffic,
+exponential random arrivals and talk/silence lengths, Pareto bursty heavy-tailed gaps, and normal sizes
+that cluster around an average. TOML also accepts tables such as
 `{ kind = "pareto", scale = 2.0, shape = 1.6 }`.
 
 Defaults: 1000 packets/s, 512-byte packets, 10 s.
@@ -67,7 +68,6 @@ number, timestamp and SSRC), so it looks to Wireshark, a gateway or an SBC like 
 
 ```sh
 rtnp-send flow -t 10.0.0.2:8998 -c 10.0.0.2:8999 --preset voip-g711 --wire rtp -d 30s   # 172-byte packets
-rtnp-send flow -t 10.0.0.2:8998 -c 10.0.0.2:8999 --preset video-720p -d 30s             # ~2.2 Mbit/s
 rtnp-send flow -t 10.0.0.2:8998 --video --video-fps 25 --video-gop 50 \
     --video-i-size normal:60000,5000 --video-p-size normal:6000,2000 -d 30s
 ```
@@ -90,6 +90,23 @@ rtnp-send flow -t 10.0.0.2:8998 --video --video-fps 25 --video-gop 50 \
   the first packet and flagged `delay_relative`), and no round-trip metering (`--meter rtt` is
   refused). Preset sizes drop the 32-byte header (G.711 is 172 bytes). Not implemented: RTCP, SIP/SDP
   call setup, SRTP, RTP over TCP, real codec bitstreams.
+
+### Choosing voice options
+
+Each of these is independent, so you decide what a flow does. Everything is off or at its default unless
+you set it. TOML scripts use the field names instead of flags (for example `rtcp_interval_ms`,
+`first_marker`, `ptime_ms`).
+
+| Option | Flag | Default |
+|---|---|---|
+| RTCP sender reports (and round trip from the receiver's answers) | `--rtcp-interval 5s`, `0` = off | on, every 5 s |
+| Marker bit on the first packet | `--first-marker` | off |
+| Talkspurts and silences | `--vad` (`--vad-talk`, `--vad-silence`) | off, continuous stream |
+| Two-way call | `--bidir` (receiver needs `--allow-reverse`) | off |
+| Packet interval and size from the codec | `--ptime 30`, also with `--preset` | codec default |
+| Payload content | `--payload zero\|random\|pattern:<hex>\|file:<path>` | codec silence |
+| IP type of service / TTL | `--tos 16`, `--ttl 64` | OS default |
+| Run length | `-d 30s`, `--count`, `--max-bytes`, `--forever` | 10 s |
 
 ## Two-way calls
 
@@ -117,8 +134,8 @@ the sender) with loss, RFC 3550 jitter and rate. `--bidir` needs `--wire rtp`, `
 
 ## Voice quality: round trip, marking, verdicts
 
-**Round trip over RTCP.** Plain-RTP flows send an RTCP sender report every second
-(`--rtcp-interval 1s`, `0` to turn off) and `rtnp-recv` answers it, so the sender gets a standard
+**Round trip over RTCP.** Plain-RTP flows send an RTCP sender report every 5 seconds
+(`--rtcp-interval 1s` to change it, `0` to turn off) and `rtnp-recv` answers it, so the sender gets a standard
 RFC 3550 round-trip time (arrival - LSR - DLSR) with no clock sync and no control channel. It
 appears as `rtt` in reports. Mouth-to-ear delay is roughly half the round trip plus the jitter
 buffer; ITU-T G.114's 150 ms one-way budget is about 300 ms round trip.
@@ -221,7 +238,7 @@ On Ctrl-C a final `{"type":"final","session":..,"flows":[..]}` line carries the 
   mean absolute delay difference and as the RFC 3550 smoothed value.
 * **Loss** is derived from sequence gaps at the receiver, and against the sender's count when both logs
   are decoded together. Duplicates are not tracked separately.
-* **Presets** (`rtnp-send presets`) are approximations of typical VoIP/DNS/Telnet/game traffic.
+* **Presets** (`rtnp-send presets`) are approximations of typical VoIP traffic (G.711, G.711 A-law, G.729, G.723.1).
 * **ICMP** needs privileges (root, `CAP_NET_RAW`, or a suitable `net.ipv4.ping_group_range`).
 * **SCTP is implemented but has not been run:** the development kernel has no SCTP support, so only the
   "unsupported" path is tested. Please try it on a host with `sctp` loaded before relying on it.

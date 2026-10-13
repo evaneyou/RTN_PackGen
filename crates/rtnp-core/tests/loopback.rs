@@ -32,7 +32,7 @@ async fn udp_flow_is_measured_end_to_end() {
         target: addr.to_string(),
         rate_pps: Some(2000.0),
         count: Some(200),
-        size: Some("uniform:64,512".parse().unwrap()),
+        size: Some("normal:300,80".parse().unwrap()),
         seed: Some(42),
         ..Default::default()
     };

@@ -290,6 +290,7 @@ pub(crate) async fn run_reverse(
         video: None,
         bidirectional: false,
         rtcp_interval: None,
+        first_marker: false,
     };
     let mut tx = Tx {
         sock,
@@ -336,7 +337,7 @@ async fn run_audio(
         write_rtp(
             &mut buf[..RTP_HEADER_LEN],
             codec.payload_type(),
-            vad && pacer.new_talkspurt,
+            (vad && pacer.new_talkspurt) || (cfg.first_marker && tx.packets + tx.errors == 0),
             seq0.wrapping_add(tx.packets.wrapping_add(tx.errors) as u16),
             ts0.wrapping_add(ticks),
             ssrc,

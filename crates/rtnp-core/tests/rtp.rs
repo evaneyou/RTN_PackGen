@@ -94,6 +94,26 @@ async fn voice_is_a_bare_rtp_stream() {
 }
 
 #[tokio::test]
+async fn first_marker_is_optional_and_marks_only_the_first_packet() {
+    let spec = |first_marker| FlowSpec {
+        preset: Some("voip-g711a".into()),
+        ptime_ms: Some(30.0),
+        wire: Some(Wire::Rtp),
+        rtcp_interval_ms: Some(0),
+        first_marker,
+        count: Some(10),
+        ..Default::default()
+    };
+    let on = capture(spec(true)).await;
+    assert_eq!(on.len(), 10);
+    assert_eq!(on.iter().filter(|p| p.marker).count(), 1);
+    assert!(on[0].marker);
+    assert!(on.iter().all(|p| p.len == 252 && p.pt == 8));
+    let off = capture(spec(false)).await;
+    assert!(off.iter().all(|p| !p.marker));
+}
+
+#[tokio::test]
 async fn vad_sets_marker_on_talkspurt_start_and_skips_timestamps() {
     let pkts = capture(FlowSpec {
         rtp: Some(Codec::G711),
