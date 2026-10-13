@@ -35,6 +35,8 @@ enum Cmd {
     Flow(FlowArgs),
     /// List built-in traffic presets
     Presets,
+    /// Print a fresh random SRTP master key (60 hex characters)
+    SrtpKey,
     /// Test whether a priority queue protects voice: run the same call marked (EF) and unmarked
     /// under identical background load and compare them
     Compare(CompareArgs),
@@ -250,6 +252,15 @@ struct FlowArgs {
     /// Set the RTP marker bit on the first packet (plain-RTP voice), as most phones do
     #[arg(long)]
     first_marker: bool,
+    /// Encrypt the RTP stream with SRTP (AES_CM_128_HMAC_SHA1_80). The 30-byte master key and
+    /// salt as 60 hex or 40 base64 characters; make one with `rtnp-send srtp-key`. Prefer
+    /// RTNP_SRTP_KEY or --srtp-key-file over this flag, which shows in the process list.
+    /// Needs --wire rtp; the receiver must use the same key.
+    #[arg(long, env = "RTNP_SRTP_KEY", hide_env_values = true)]
+    srtp_key: Option<String>,
+    /// Read the SRTP master key from a file
+    #[arg(long)]
+    srtp_key_file: Option<PathBuf>,
     #[command(flatten)]
     common: Common,
 }
@@ -261,6 +272,10 @@ async fn main() -> Result<()> {
             for p in preset::all() {
                 println!("{:<16} {:<4} {}", p.name, p.proto.as_str(), p.description);
             }
+            Ok(())
+        }
+        Cmd::SrtpKey => {
+            println!("{}", rtnp_core::srtp::MasterKey::random().to_hex());
             Ok(())
         }
         Cmd::Compare(a) => compare(a).await,
@@ -310,6 +325,10 @@ async fn main() -> Result<()> {
                 vad_silence_ms: a.vad_silence,
                 rtcp_interval_ms: a.rtcp_interval.map(|d| d.as_millis() as u64),
                 first_marker: a.first_marker,
+                srtp_key: rtnp_core::srtp::load_key(
+                    a.srtp_key.as_deref(),
+                    a.srtp_key_file.as_deref(),
+                )?,
             };
             execute(vec![spec], a.common).await
         }
@@ -335,6 +354,9 @@ async fn execute(specs: Vec<FlowSpec>, mut c: Common) -> Result<()> {
     let limits = c.limits()?;
     if limits.is_some() && c.agent.is_some() {
         bail!("--max-rtt/--max-jitter/--max-loss/--expect-dscp are not supported with --agent");
+    }
+    if c.agent.is_some() && specs.iter().any(|s| s.srtp_key.is_some()) {
+        bail!("SRTP keys are not sent to remote agents: run SRTP flows from this host");
     }
     let forever = specs.iter().any(|s| s.forever);
     if forever && c.interval.is_none() {

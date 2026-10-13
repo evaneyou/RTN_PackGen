@@ -53,6 +53,14 @@ struct Args {
     /// the address its forward stream came from and stops 5 s after that stream goes quiet
     #[arg(long)]
     allow_reverse: bool,
+    /// Expect SRTP (AES_CM_128_HMAC_SHA1_80) on the UDP port with this 30-byte master key and
+    /// salt (60 hex or 40 base64 characters). Plain RTP and packets that fail authentication are
+    /// dropped and counted as malformed. Prefer RTNP_SRTP_KEY or --srtp-key-file.
+    #[arg(long, env = "RTNP_SRTP_KEY", hide_env_values = true)]
+    srtp_key: Option<String>,
+    /// Read the SRTP master key from a file
+    #[arg(long)]
+    srtp_key_file: Option<PathBuf>,
     /// Write per-packet JSONL records to this file
     #[arg(long, short = 'l')]
     log: Option<PathBuf>,
@@ -94,6 +102,10 @@ async fn main() -> Result<()> {
         auth_key: key.clone(),
         allow_launch: args.allow_launch,
         allow_reverse: args.allow_reverse,
+        srtp_key: rtnp_core::srtp::load_key(
+            args.srtp_key.as_deref(),
+            args.srtp_key_file.as_deref(),
+        )?,
     };
     let rx = Receiver::bind(cfg, sink.handle())
         .await

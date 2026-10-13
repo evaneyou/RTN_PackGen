@@ -72,6 +72,9 @@ pub struct ReceiverConfig {
     /// bounded (10-200 ms cadence, up to 1400-byte packets), goes only to the address its
     /// forward stream came from, and stops 5 s after that stream goes quiet.
     pub allow_reverse: bool,
+    /// Expect SRTP (AES_CM_128_HMAC_SHA1_80) on the UDP data port with this master key. Packets
+    /// that fail authentication, and plain RTP, are counted as malformed and dropped.
+    pub srtp_key: Option<crate::srtp::MasterKey>,
 }
 
 impl Default for ReceiverConfig {
@@ -87,6 +90,7 @@ impl Default for ReceiverConfig {
             auth_key: None,
             allow_launch: false,
             allow_reverse: false,
+            srtp_key: None,
         }
     }
 }
@@ -413,6 +417,7 @@ pub struct Receiver {
     one_shot: bool,
     auth_key: Option<Vec<u8>>,
     allow_launch: bool,
+    srtp_key: Option<crate::srtp::MasterKey>,
     udp: Option<UdpSocket>,
     tcp: Option<TcpListener>,
     sctp: Option<TcpListener>,
@@ -482,6 +487,7 @@ impl Receiver {
             one_shot: cfg.one_shot,
             auth_key: cfg.auth_key,
             allow_launch: cfg.allow_launch,
+            srtp_key: cfg.srtp_key,
             udp,
             tcp,
             sctp,
@@ -525,8 +531,9 @@ impl Receiver {
     /// Serve until `shutdown` resolves, a listener fails, or (in one-shot mode) a session completes.
     pub async fn serve<F: Future<Output = ()>>(self, shutdown: F) -> Result<()> {
         let mut set: JoinSet<Result<()>> = JoinSet::new();
+        let srtp = self.srtp_key.as_ref().map(crate::srtp::SrtpReceiver::new);
         if let Some(s) = self.udp {
-            set.spawn(udp_loop(s, self.shared.clone(), self.log.clone()));
+            set.spawn(udp_loop(s, self.shared.clone(), self.log.clone(), srtp));
         }
         if let Some(l) = self.tcp {
             set.spawn(stream_accept_loop(
@@ -593,7 +600,12 @@ fn rtcp_reply(pkt: &[u8]) -> Option<Vec<u8>> {
     None
 }
 
-async fn udp_loop(sock: UdpSocket, shared: Arc<Shared>, log: LogHandle) -> Result<()> {
+async fn udp_loop(
+    sock: UdpSocket,
+    shared: Arc<Shared>,
+    log: LogHandle,
+    mut srtp: Option<crate::srtp::SrtpReceiver>,
+) -> Result<()> {
     crate::tos::enable_recv_tos(&sock);
     let sock = Arc::new(sock);
     let mut buf = vec![0u8; 65_536];
@@ -615,6 +627,16 @@ async fn udp_loop(sock: UdpSocket, shared: Arc<Shared>, log: LogHandle) -> Resul
         }
         // Plain RTP starts with version 2 (0b10..); our own header starts with 0x44 ('D').
         if n >= RTP_HEADER_LEN && buf[0] >> 6 == 2 {
+            let n = match srtp.as_mut() {
+                Some(rx) => match rx.unprotect(&mut buf[..n]) {
+                    Some(len) => len,
+                    None => {
+                        shared.malformed.fetch_add(1, Ordering::Relaxed);
+                        continue;
+                    }
+                },
+                None => n,
+            };
             shared.record_rtp(&sock, &log, peer, &buf[..n], rx_ns, tos);
             continue;
         }

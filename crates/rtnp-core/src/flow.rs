@@ -363,6 +363,11 @@ pub struct FlowSpec {
     pub first_marker: bool,
     /// `rtnp` (default) or `rtp`: plain RTP on the wire, see [`Wire::Rtp`].
     pub wire: Option<Wire>,
+    /// Encrypt the RTP stream with SRTP (AES_CM_128_HMAC_SHA1_80) using this master key (60 hex
+    /// or 40 base64 characters). Plain-RTP flows only. Never serialised, so it is not sent to
+    /// remote agents.
+    #[serde(default, skip_serializing)]
+    pub srtp_key: Option<crate::srtp::MasterKey>,
     /// Synthetic video stream (implies `wire = "rtp"`); see [`VideoSpec`].
     pub video: Option<VideoSpec>,
     /// Voice-activity detection: alternate talkspurts and silences.
@@ -429,6 +434,8 @@ pub struct ResolvedFlow {
     pub rtcp_interval: Option<Duration>,
     /// Mark the first RTP packet of the stream (plain-RTP voice only).
     pub first_marker: bool,
+    /// SRTP master key (plain RTP only); adds a 10-byte tag to every packet.
+    pub srtp_key: Option<crate::srtp::MasterKey>,
 }
 
 /// Restrictions applied when resolving flows that came from an untrusted peer.
@@ -621,6 +628,16 @@ impl FlowSpec {
                 "first_marker needs plain-RTP voice (wire = rtp and an rtp codec)".into(),
             ));
         }
+        if self.srtp_key.is_some() {
+            if wire != Wire::Rtp {
+                return Err(Error::Config("srtp needs plain RTP (wire = rtp)".into()));
+            }
+            if self.bidirectional {
+                return Err(Error::Config(
+                    "srtp does not support bidirectional calls yet".into(),
+                ));
+            }
+        }
         if self.bidirectional {
             if wire != Wire::Rtp || video.is_some() || rtp.is_none() {
                 return Err(Error::Config(
@@ -766,6 +783,7 @@ impl FlowSpec {
             bidirectional: self.bidirectional,
             rtcp_interval,
             first_marker: self.first_marker,
+            srtp_key: self.srtp_key.clone(),
         })
     }
 }

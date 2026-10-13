@@ -20,6 +20,7 @@ pub mod report;
 pub mod rtcp;
 mod rtpsend;
 pub mod sender;
+pub mod srtp;
 pub mod stats;
 pub mod time;
 mod tos;
