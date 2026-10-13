@@ -225,8 +225,7 @@ struct FlowArgs {
     /// --rtp or --video)
     #[arg(long)]
     wire: Option<Wire>,
-    /// Synthetic video stream over plain RTP (see --video-*); the video-720p / video-1080p
-    /// presets are shortcuts
+    /// Synthetic video stream over plain RTP (see --video-*)
     #[arg(long)]
     video: bool,
     /// Video frames per second (default 30)

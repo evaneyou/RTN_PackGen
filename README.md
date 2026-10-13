@@ -67,7 +67,6 @@ number, timestamp and SSRC), so it looks to Wireshark, a gateway or an SBC like 
 
 ```sh
 rtnp-send flow -t 10.0.0.2:8998 -c 10.0.0.2:8999 --preset voip-g711 --wire rtp -d 30s   # 172-byte packets
-rtnp-send flow -t 10.0.0.2:8998 -c 10.0.0.2:8999 --preset video-720p -d 30s             # ~2.2 Mbit/s
 rtnp-send flow -t 10.0.0.2:8998 --video --video-fps 25 --video-gop 50 \
     --video-i-size normal:60000,5000 --video-p-size normal:6000,2000 -d 30s
 ```
@@ -221,7 +220,7 @@ On Ctrl-C a final `{"type":"final","session":..,"flows":[..]}` line carries the 
   mean absolute delay difference and as the RFC 3550 smoothed value.
 * **Loss** is derived from sequence gaps at the receiver, and against the sender's count when both logs
   are decoded together. Duplicates are not tracked separately.
-* **Presets** (`rtnp-send presets`) are approximations of typical VoIP/DNS/Telnet/game traffic.
+* **Presets** (`rtnp-send presets`) are approximations of typical VoIP traffic (G.711, G.711 A-law, G.729, G.723.1).
 * **ICMP** needs privileges (root, `CAP_NET_RAW`, or a suitable `net.ipv4.ping_group_range`).
 * **SCTP is implemented but has not been run:** the development kernel has no SCTP support, so only the
   "unsupported" path is tested. Please try it on a host with `sctp` loaded before relying on it.

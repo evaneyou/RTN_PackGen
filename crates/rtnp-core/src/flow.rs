@@ -478,10 +478,7 @@ impl FlowSpec {
             .or(preset.as_ref().map(|p| p.proto))
             .unwrap_or(Proto::Udp);
 
-        let video = self
-            .video
-            .clone()
-            .or_else(|| preset.as_ref().and_then(|p| p.video.clone()));
+        let video = self.video.clone();
         let wire = self.wire.unwrap_or(if video.is_some() {
             Wire::Rtp
         } else {
@@ -951,12 +948,6 @@ mod tests {
             wire: Some(Wire::Rtnp),
             ..video.clone()
         }));
-        let preset = FlowSpec {
-            target: "x:1".into(),
-            preset: Some("video-720p".into()),
-            ..Default::default()
-        };
-        assert!(preset.resolve(0).unwrap().video.is_some());
         let v = VideoSpec {
             payload_bytes: 5000,
             ..VideoSpec::default()
