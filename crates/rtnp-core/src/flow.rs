@@ -354,9 +354,13 @@ pub struct FlowSpec {
     /// channel and a receiver started with `--allow-reverse`.
     #[serde(default)]
     pub bidirectional: bool,
-    /// Plain-RTP flows send an RTCP sender report this often (ms, default 1000, 0 = off) and the
+    /// Plain-RTP flows send an RTCP sender report this often (ms, default 5000, 0 = off) and the
     /// receiver answers, which yields a standard round-trip time (RFC 3550) with no clock sync.
     pub rtcp_interval_ms: Option<u64>,
+    /// Set the RTP marker bit on the first packet of the stream, as most phones do. Plain-RTP
+    /// voice only; off by default. (VAD already marks the start of each talkspurt.)
+    #[serde(default)]
+    pub first_marker: bool,
     /// `rtnp` (default) or `rtp`: plain RTP on the wire, see [`Wire::Rtp`].
     pub wire: Option<Wire>,
     /// Synthetic video stream (implies `wire = "rtp"`); see [`VideoSpec`].
@@ -423,6 +427,8 @@ pub struct ResolvedFlow {
     pub bidirectional: bool,
     /// RTCP sender-report period (plain RTP only).
     pub rtcp_interval: Option<Duration>,
+    /// Mark the first RTP packet of the stream (plain-RTP voice only).
+    pub first_marker: bool,
 }
 
 /// Restrictions applied when resolving flows that came from an untrusted peer.
@@ -496,7 +502,8 @@ impl FlowSpec {
         } else {
             crate::proto::HEADER_LEN + crate::proto::RTP_HEADER_LEN
         };
-        let ptime_dists = match (self.ptime_ms, self.rtp) {
+        let ptime_codec = self.rtp.or(preset.as_ref().and_then(|p| p.rtp));
+        let ptime_dists = match (self.ptime_ms, ptime_codec) {
             (None, _) => None,
             (Some(_), None) => {
                 return Err(Error::Config("ptime needs an rtp codec".into()));
@@ -604,8 +611,13 @@ impl FlowSpec {
                 ));
             }
             Some(ms) => Some(Duration::from_millis(ms)),
-            None => (wire == Wire::Rtp).then_some(Duration::from_secs(1)),
+            None => (wire == Wire::Rtp).then_some(Duration::from_secs(5)),
         };
+        if self.first_marker && (wire != Wire::Rtp || video.is_some() || rtp.is_none()) {
+            return Err(Error::Config(
+                "first_marker needs plain-RTP voice (wire = rtp and an rtp codec)".into(),
+            ));
+        }
         if self.bidirectional {
             if wire != Wire::Rtp || video.is_some() || rtp.is_none() {
                 return Err(Error::Config(
@@ -750,6 +762,7 @@ impl FlowSpec {
             video,
             bidirectional: self.bidirectional,
             rtcp_interval,
+            first_marker: self.first_marker,
         })
     }
 }
@@ -879,6 +892,45 @@ mod tests {
             max_duration: Some(Duration::from_secs(5)),
         };
         assert!(f.resolve_with(0, &untrusted).is_err());
+    }
+
+    #[test]
+    fn rtcp_defaults_to_five_seconds_and_first_marker_needs_rtp_voice() {
+        let voice = FlowSpec {
+            target: "x:1".into(),
+            rtp: Some(Codec::G711a),
+            wire: Some(Wire::Rtp),
+            ..Default::default()
+        };
+        assert_eq!(
+            voice.resolve(0).unwrap().rtcp_interval,
+            Some(Duration::from_secs(5))
+        );
+        let off = FlowSpec {
+            rtcp_interval_ms: Some(0),
+            ..voice.clone()
+        };
+        assert_eq!(off.resolve(0).unwrap().rtcp_interval, None);
+        let marked = FlowSpec {
+            first_marker: true,
+            ..voice.clone()
+        };
+        assert!(marked.resolve(0).unwrap().first_marker);
+        let rtnp_wire = FlowSpec {
+            target: "x:1".into(),
+            rtp: Some(Codec::G711a),
+            first_marker: true,
+            ..Default::default()
+        };
+        assert!(rtnp_wire.resolve(0).is_err());
+        let preset_ptime = FlowSpec {
+            target: "x:1".into(),
+            preset: Some("voip-g711a".into()),
+            ptime_ms: Some(30.0),
+            wire: Some(Wire::Rtp),
+            ..Default::default()
+        };
+        assert!(preset_ptime.resolve(0).is_ok());
     }
 
     #[test]

@@ -243,10 +243,13 @@ struct FlowArgs {
     /// Maximum RTP payload per packet in bytes (default 1200)
     #[arg(long, requires = "video")]
     video_payload: Option<usize>,
-    /// RTCP sender-report period for --wire rtp, e.g. 1s (default) or 0 to turn RTCP off. The
+    /// RTCP sender-report period for --wire rtp, e.g. 1s (default 5s) or 0 to turn RTCP off. The
     /// receiver's answers give a standard round-trip time
     #[arg(long, value_parser = parse_duration)]
     rtcp_interval: Option<Duration>,
+    /// Set the RTP marker bit on the first packet (plain-RTP voice), as most phones do
+    #[arg(long)]
+    first_marker: bool,
     #[command(flatten)]
     common: Common,
 }
@@ -306,6 +309,7 @@ async fn main() -> Result<()> {
                 vad_talk_ms: a.vad_talk,
                 vad_silence_ms: a.vad_silence,
                 rtcp_interval_ms: a.rtcp_interval.map(|d| d.as_millis() as u64),
+                first_marker: a.first_marker,
             };
             execute(vec![spec], a.common).await
         }

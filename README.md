@@ -90,6 +90,23 @@ rtnp-send flow -t 10.0.0.2:8998 --video --video-fps 25 --video-gop 50 \
   refused). Preset sizes drop the 32-byte header (G.711 is 172 bytes). Not implemented: RTCP, SIP/SDP
   call setup, SRTP, RTP over TCP, real codec bitstreams.
 
+### Choosing voice options
+
+Each of these is independent, so you decide what a flow does. Everything is off or at its default unless
+you set it. TOML scripts use the field names instead of flags (for example `rtcp_interval_ms`,
+`first_marker`, `ptime_ms`).
+
+| Option | Flag | Default |
+|---|---|---|
+| RTCP sender reports (and round trip from the receiver's answers) | `--rtcp-interval 5s`, `0` = off | on, every 5 s |
+| Marker bit on the first packet | `--first-marker` | off |
+| Talkspurts and silences | `--vad` (`--vad-talk`, `--vad-silence`) | off, continuous stream |
+| Two-way call | `--bidir` (receiver needs `--allow-reverse`) | off |
+| Packet interval and size from the codec | `--ptime 30`, also with `--preset` | codec default |
+| Payload content | `--payload zero\|random\|pattern:<hex>\|file:<path>` | codec silence |
+| IP type of service / TTL | `--tos 16`, `--ttl 64` | OS default |
+| Run length | `-d 30s`, `--count`, `--max-bytes`, `--forever` | 10 s |
+
 ## Two-way calls
 
 ```sh
@@ -116,8 +133,8 @@ the sender) with loss, RFC 3550 jitter and rate. `--bidir` needs `--wire rtp`, `
 
 ## Voice quality: round trip, marking, verdicts
 
-**Round trip over RTCP.** Plain-RTP flows send an RTCP sender report every second
-(`--rtcp-interval 1s`, `0` to turn off) and `rtnp-recv` answers it, so the sender gets a standard
+**Round trip over RTCP.** Plain-RTP flows send an RTCP sender report every 5 seconds
+(`--rtcp-interval 1s` to change it, `0` to turn off) and `rtnp-recv` answers it, so the sender gets a standard
 RFC 3550 round-trip time (arrival - LSR - DLSR) with no clock sync and no control channel. It
 appears as `rtt` in reports. Mouth-to-ear delay is roughly half the round trip plus the jitter
 buffer; ITU-T G.114's 150 ms one-way budget is about 300 ms round trip.
