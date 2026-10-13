@@ -273,6 +273,13 @@ configured to; many home routers ignore or clear DSCP, and WireGuard copies the 
 outer packet but the ISP in between usually does not honour it. Run it against the congested hop
 you care about.
 
+## Results and databases
+
+RTNP does not depend on any database. It writes plain results (JSON lines, CSV) that you can load into the
+one you already use, such as PostgreSQL, ClickHouse or SQLite, for querying and analysis. The fields and
+formats are documented in [docs/data-format.md](docs/data-format.md), and `examples/load_results.py` is a
+small loader you can adapt.
+
 ## Continuous mode
 
 ```sh
