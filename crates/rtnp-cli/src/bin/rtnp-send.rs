@@ -261,6 +261,14 @@ struct FlowArgs {
     /// Read the SRTP master key from a file
     #[arg(long)]
     srtp_key_file: Option<PathBuf>,
+    /// Set the call up with SIP first (INVITE, ACK, BYE) with an SDP offer. The target is then the
+    /// receiver's SIP port (rtnp-recv --sip-port) and media goes to the port in its answer.
+    /// Plain-RTP voice only
+    #[arg(long)]
+    sip: bool,
+    /// With --sip: encrypt with SRTP using a fresh random key sent in the SDP (SDES)
+    #[arg(long, requires = "sip", conflicts_with_all = ["srtp_key", "srtp_key_file"])]
+    srtp: bool,
     #[command(flatten)]
     common: Common,
 }
@@ -325,6 +333,8 @@ async fn main() -> Result<()> {
                 vad_silence_ms: a.vad_silence,
                 rtcp_interval_ms: a.rtcp_interval.map(|d| d.as_millis() as u64),
                 first_marker: a.first_marker,
+                sip: a.sip,
+                srtp: a.srtp,
                 srtp_key: rtnp_core::srtp::load_key(
                     a.srtp_key.as_deref(),
                     a.srtp_key_file.as_deref(),

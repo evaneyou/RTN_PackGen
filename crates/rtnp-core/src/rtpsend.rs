@@ -103,6 +103,28 @@ pub(crate) async fn run(
         "[::]:0"
     };
     let sock = UdpSocket::bind(bind).await?;
+    // With SIP the target is the callee's SIP port; media goes where the answer says.
+    let mut call = None;
+    let addr = if cfg.sip {
+        let codec = cfg.rtp.expect("resolve guarantees a codec for SIP calls");
+        let ptime_ms = match &cfg.idt_ms {
+            crate::dist::Dist::Constant { value } => Some(value.round() as u32),
+            _ => None,
+        };
+        let c = crate::sip::invite(crate::sip::Offer {
+            sip_target: addr,
+            media_port: sock.local_addr()?.port(),
+            pt: codec.payload_type(),
+            ptime_ms,
+            key: cfg.srtp_key.as_ref(),
+        })
+        .await?;
+        let media = c.media;
+        call = Some(c);
+        media
+    } else {
+        addr
+    };
     apply_socket_opts(&sock, &addr, &cfg)?;
     sock.connect(addr).await?;
 
@@ -175,6 +197,9 @@ pub(crate) async fn run(
         // let the last return packets (and RTCP answers) arrive before we stop listening
         tokio::time::sleep(REVERSE_DRAIN).await;
         reader.abort();
+    }
+    if let Some(c) = call {
+        c.bye().await;
     }
     let sent = tx.packets;
     log.send(LogRecord::FlowEnd {
@@ -309,6 +334,7 @@ pub(crate) async fn run_reverse(
         rtcp_interval: None,
         first_marker: false,
         srtp_key: None,
+        sip: false,
     };
     let mut tx = Tx {
         sock,

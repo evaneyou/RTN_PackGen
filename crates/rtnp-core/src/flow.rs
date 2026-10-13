@@ -390,6 +390,14 @@ pub struct FlowSpec {
     /// remote agents.
     #[serde(default, skip_serializing)]
     pub srtp_key: Option<crate::srtp::MasterKey>,
+    /// SRTP with a fresh random key per call, sent to the receiver in the SIP/SDP offer (SDES).
+    /// Needs `sip`; conflicts with `srtp_key`.
+    #[serde(default)]
+    pub srtp: bool,
+    /// Set the call up with SIP first: INVITE/ACK to `target` (the receiver's SIP port), media to
+    /// the port in the SDP answer, BYE at the end. Plain-RTP voice only.
+    #[serde(default)]
+    pub sip: bool,
     /// Synthetic video stream (implies `wire = "rtp"`); see [`VideoSpec`].
     pub video: Option<VideoSpec>,
     /// Voice-activity detection: alternate talkspurts and silences.
@@ -458,6 +466,8 @@ pub struct ResolvedFlow {
     pub first_marker: bool,
     /// SRTP master key (plain RTP only); adds a 10-byte tag to every packet.
     pub srtp_key: Option<crate::srtp::MasterKey>,
+    /// Set the call up with SIP/SDP; `target` is then the receiver's SIP address.
+    pub sip: bool,
 }
 
 /// Restrictions applied when resolving flows that came from an untrusted peer.
@@ -650,7 +660,24 @@ impl FlowSpec {
                 "first_marker needs plain-RTP voice (wire = rtp and an rtp codec)".into(),
             ));
         }
-        if self.srtp_key.is_some() {
+        if self.sip
+            && (wire != Wire::Rtp || video.is_some() || rtp.is_none() || proto != Proto::Udp)
+        {
+            return Err(Error::Config(
+                "sip needs plain-RTP voice over UDP (wire = rtp and an rtp codec)".into(),
+            ));
+        }
+        if self.srtp && (!self.sip || self.srtp_key.is_some()) {
+            return Err(Error::Config(
+                "srtp = true needs sip = true (the key travels in the SDP) and no srtp_key; with a fixed key use srtp_key".into(),
+            ));
+        }
+        let srtp_key = if self.srtp {
+            Some(crate::srtp::MasterKey::random())
+        } else {
+            self.srtp_key.clone()
+        };
+        if srtp_key.is_some() {
             if wire != Wire::Rtp {
                 return Err(Error::Config("srtp needs plain RTP (wire = rtp)".into()));
             }
@@ -819,7 +846,8 @@ impl FlowSpec {
             bidirectional: self.bidirectional,
             rtcp_interval,
             first_marker: self.first_marker,
-            srtp_key: self.srtp_key.clone(),
+            srtp_key,
+            sip: self.sip,
         })
     }
 }

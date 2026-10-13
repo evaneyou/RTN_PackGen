@@ -26,6 +26,11 @@ struct Args {
     sctp_port: Option<u16>,
     #[arg(long, default_value_t = 8999)]
     control_port: u16,
+    /// Answer SIP calls on this UDP port (off by default; 5060 is the usual one). Callers get the
+    /// UDP data port in the SDP answer; SRTP keys sent in SDP (SDES) are accepted per call unless
+    /// --srtp-key is set. A test endpoint, not a PBX: no registration or authentication
+    #[arg(long)]
+    sip_port: Option<u16>,
     /// Serve Prometheus metrics (GET /metrics) on this port
     #[arg(long)]
     metrics_port: Option<u16>,
@@ -102,6 +107,7 @@ async fn main() -> Result<()> {
         auth_key: key.clone(),
         allow_launch: args.allow_launch,
         allow_reverse: args.allow_reverse,
+        sip_port: args.sip_port,
         srtp_key: rtnp_core::srtp::load_key(
             args.srtp_key.as_deref(),
             args.srtp_key_file.as_deref(),
@@ -112,12 +118,13 @@ async fn main() -> Result<()> {
         .context("cannot start receiver")?;
     let off = || "off".to_string();
     eprintln!(
-        "listening: udp={} tcp={} sctp={} control={} metrics={}",
+        "listening: udp={} tcp={} sctp={} control={} metrics={} sip={}",
         rx.udp_addr().map(|a| a.to_string()).unwrap_or_else(off),
         rx.tcp_addr().map(|a| a.to_string()).unwrap_or_else(off),
         rx.sctp_addr().map(|a| a.to_string()).unwrap_or_else(off),
         rx.control_addr().map(|a| a.to_string()).unwrap_or_else(off),
         rx.metrics_addr().map(|a| a.to_string()).unwrap_or_else(off),
+        rx.sip_addr().map(|a| a.to_string()).unwrap_or_else(off),
     );
     if key.is_some() {
         eprintln!("control channel: authentication required");

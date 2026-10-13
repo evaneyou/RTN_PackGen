@@ -75,6 +75,10 @@ pub struct ReceiverConfig {
     /// Expect SRTP (AES_CM_128_HMAC_SHA1_80) on the UDP data port with this master key. Packets
     /// that fail authentication, and plain RTP, are counted as malformed and dropped.
     pub srtp_key: Option<crate::srtp::MasterKey>,
+    /// Answer SIP INVITEs on this UDP port (`Some(0)` picks one). Needs `udp_port`. Callers learn
+    /// the RTP port from the SDP answer; SRTP keys offered in SDP (SDES) are accepted per call
+    /// unless a fixed `srtp_key` is set, in which case offers must carry that key.
+    pub sip_port: Option<u16>,
 }
 
 impl Default for ReceiverConfig {
@@ -91,6 +95,7 @@ impl Default for ReceiverConfig {
             allow_launch: false,
             allow_reverse: false,
             srtp_key: None,
+            sip_port: None,
         }
     }
 }
@@ -418,6 +423,8 @@ pub struct Receiver {
     auth_key: Option<Vec<u8>>,
     allow_launch: bool,
     srtp_key: Option<crate::srtp::MasterKey>,
+    sip: Option<UdpSocket>,
+    call_keys: Arc<crate::sip::CallKeys>,
     udp: Option<UdpSocket>,
     tcp: Option<TcpListener>,
     sctp: Option<TcpListener>,
@@ -467,6 +474,17 @@ impl Receiver {
             Some(p) => Some(UdpSocket::bind((cfg.bind, p)).await?),
             None => None,
         };
+        let sip = match cfg.sip_port {
+            Some(p) => {
+                if udp.is_none() {
+                    return Err(Error::Config(
+                        "the SIP responder needs a UDP data port".into(),
+                    ));
+                }
+                Some(UdpSocket::bind((cfg.bind, p)).await?)
+            }
+            None => None,
+        };
         let tcp = match cfg.tcp_port {
             Some(p) => Some(TcpListener::bind((cfg.bind, p)).await?),
             None => None,
@@ -488,6 +506,8 @@ impl Receiver {
             auth_key: cfg.auth_key,
             allow_launch: cfg.allow_launch,
             srtp_key: cfg.srtp_key,
+            sip,
+            call_keys: Arc::default(),
             udp,
             tcp,
             sctp,
@@ -506,6 +526,15 @@ impl Receiver {
 
     pub fn udp_addr(&self) -> Option<SocketAddr> {
         self.udp.as_ref().and_then(|s| s.local_addr().ok())
+    }
+
+    pub fn sip_addr(&self) -> Option<SocketAddr> {
+        self.sip.as_ref().and_then(|s| s.local_addr().ok())
+    }
+
+    /// Calls with an SRTP key learned from SDP that have not hung up yet.
+    pub fn call_keys(&self) -> Arc<crate::sip::CallKeys> {
+        self.call_keys.clone()
     }
 
     pub fn tcp_addr(&self) -> Option<SocketAddr> {
@@ -532,8 +561,24 @@ impl Receiver {
     pub async fn serve<F: Future<Output = ()>>(self, shutdown: F) -> Result<()> {
         let mut set: JoinSet<Result<()>> = JoinSet::new();
         let srtp = self.srtp_key.as_ref().map(crate::srtp::SrtpReceiver::new);
+        if let (Some(s), Some(u)) = (
+            self.sip,
+            self.udp.as_ref().and_then(|u| u.local_addr().ok()),
+        ) {
+            let policy = crate::sip::Policy {
+                media_port: u.port(),
+                static_key: self.srtp_key.clone(),
+            };
+            set.spawn(crate::sip::serve(s, policy, self.call_keys.clone()));
+        }
         if let Some(s) = self.udp {
-            set.spawn(udp_loop(s, self.shared.clone(), self.log.clone(), srtp));
+            set.spawn(udp_loop(
+                s,
+                self.shared.clone(),
+                self.log.clone(),
+                srtp,
+                self.call_keys.clone(),
+            ));
         }
         if let Some(l) = self.tcp {
             set.spawn(stream_accept_loop(
@@ -605,6 +650,7 @@ async fn udp_loop(
     shared: Arc<Shared>,
     log: LogHandle,
     mut srtp: Option<crate::srtp::SrtpReceiver>,
+    call_keys: Arc<crate::sip::CallKeys>,
 ) -> Result<()> {
     crate::tos::enable_recv_tos(&sock);
     let sock = Arc::new(sock);
@@ -635,7 +681,15 @@ async fn udp_loop(
                         continue;
                     }
                 },
-                None => n,
+                // SRTP learned from a SIP call, looked up by the source the caller announced
+                None => match call_keys.unprotect(peer, &mut buf[..n]) {
+                    Some(Some(len)) => len,
+                    Some(None) => {
+                        shared.malformed.fetch_add(1, Ordering::Relaxed);
+                        continue;
+                    }
+                    None => n,
+                },
             };
             shared.record_rtp(&sock, &log, peer, &buf[..n], rx_ns, tos);
             continue;
