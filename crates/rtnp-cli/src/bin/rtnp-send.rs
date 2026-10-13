@@ -209,7 +209,8 @@ struct FlowArgs {
     /// owd (one-way delay, default) or rtt (the receiver reflects packets)
     #[arg(long)]
     meter: Option<Meter>,
-    /// Packet body: zero (default), random, pattern:<hex> or file:<path>
+    /// Packet body: zero (default), random, pattern:<hex>, file:<path>, or real G.711 audio with
+    /// tone[:<hz>] or wav:<path> (8 kHz mono 16-bit; plain-RTP G.711 only)
     #[arg(long)]
     payload: Option<Payload>,
     /// Write an RTP header for this codec: g711 (µ-law), g711a (A-law), g729, g723 (UDP only)
