@@ -484,7 +484,10 @@ impl FlowSpec {
             .or(preset.as_ref().map(|p| p.proto))
             .unwrap_or(Proto::Udp);
 
-        let video = self.video.clone();
+        let video = self
+            .video
+            .clone()
+            .or_else(|| preset.as_ref().and_then(|p| p.video.clone()));
         let wire = self.wire.unwrap_or(if video.is_some() {
             Wire::Rtp
         } else {
@@ -931,6 +934,31 @@ mod tests {
             ..Default::default()
         };
         assert!(preset_ptime.resolve(0).is_ok());
+    }
+
+    #[test]
+    fn business_presets_resolve() {
+        let video = FlowSpec {
+            target: "x:1".into(),
+            preset: Some("video-conference".into()),
+            ..Default::default()
+        }
+        .resolve(0)
+        .unwrap();
+        assert_eq!(video.wire, Wire::Rtp);
+        assert!(video.video.is_some());
+        for name in ["remote-desktop", "market-data"] {
+            let r = FlowSpec {
+                target: "x:1".into(),
+                preset: Some(name.into()),
+                ..Default::default()
+            }
+            .resolve(0)
+            .unwrap();
+            assert_eq!(r.proto, Proto::Udp);
+            assert!(matches!(r.idt_ms, Dist::Pareto { .. }));
+            assert!(r.video.is_none());
+        }
     }
 
     #[test]

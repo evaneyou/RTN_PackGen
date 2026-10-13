@@ -1,0 +1,16 @@
+# A video call: audio and video as two concurrent plain-RTP flows (both are estimates).
+#   rtnp-recv --log rx.jsonl
+#   rtnp-send run examples/video-conference.toml --control 127.0.0.1:8999 --log tx.jsonl
+
+[[flow]]
+name = "audio"
+preset = "voip-g711a"         # 20 ms voice; add ptime_ms = 30 to match a 30 ms call
+wire = "rtp"
+target = "127.0.0.1:8998"
+duration_ms = 20000
+
+[[flow]]
+name = "video"
+preset = "video-conference"   # 30 fps, ~1.1 Mbit/s, plain RTP
+target = "127.0.0.1:8998"
+duration_ms = 20000
