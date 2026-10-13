@@ -241,7 +241,9 @@ On Ctrl-C a final `{"type":"final","session":..,"flows":[..]}` line carries the 
 * **Presets** (`rtnp-send presets`) are approximations. The voice presets are G.711, G.711 A-law, G.729 and G.723.1. `fortnite` (30 packets/s,
   ~250 B) and `call-of-duty` (~22 packets/s, ~900 B) are **estimates** built from public tick-rate and
   data-use figures, not from packet captures, and each sends one stream rather than the different traffic
-  per direction a real game uses.
+  per direction a real game uses. `video-conference` (about 1.1 Mbit/s of RTP video; see
+  `examples/video-conference.toml` for audio plus video), `remote-desktop` (bursty UDP) and `market-data`
+  (small packets with microbursts; sub-millisecond gaps can run late) are estimates too.
 * **ICMP** needs privileges (root, `CAP_NET_RAW`, or a suitable `net.ipv4.ping_group_range`).
 * **SCTP is implemented but has not been run:** the development kernel has no SCTP support, so only the
   "unsupported" path is tested. Please try it on a host with `sctp` loaded before relying on it.
