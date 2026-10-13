@@ -6,6 +6,9 @@ members = ["crates/rtnp-core", "crates/rtnp-cli"]
 version = "0.1.0"
 edition = "2024"
 publish = false
+license = "MIT"
+repository = "https://github.com/evaneyou/RTN_PackGen"
+authors = ["Evan You"]
 
 [workspace.dependencies]
 anyhow = "1"

@@ -1,7 +1,27 @@
-# rtnp-rs
+# RTNP
 
-A Rust distributed Internet traffic generator: generate UDP, TCP, SCTP and ICMP traffic with configurable
-inter-departure-time and packet-size distributions, measure it at the receiver, and analyse the logs offline.
+[![CI](https://github.com/evaneyou/RTN_PackGen/actions/workflows/ci.yml/badge.svg)](https://github.com/evaneyou/RTN_PackGen/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+A network traffic generator and measurement tool written in Rust. RTNP sends realistic real-time traffic
+(voice, video, game, remote-desktop and market-data patterns, or your own) over UDP, TCP, SCTP and ICMP,
+measures delay, jitter, loss and round trip at the receiver, and checks the result against pass/fail limits.
+
+## Highlights
+
+* **Looks like the real thing.** Plain-RTP mode puts bare RFC 3550 packets on the wire (G.711, G.729,
+  G.723.1 voice and synthetic video), so Wireshark, gateways and session border controllers see an ordinary
+  stream.
+* **Continuous, two-way monitoring.** Run non-stop in both directions with a rolling summary and one JSON
+  line per interval, ready for a log shipper.
+* **Real measurements.** One-way delay, RFC 3550 jitter, sequence-gap loss, and round trip from RTCP or
+  packet reflection, with no clock sync needed for round trip.
+* **QoS checks.** Pass/fail limits for round trip, jitter and loss, DSCP verification, and a marked versus
+  unmarked comparison to test whether a priority queue protects voice.
+* **Built-in traffic models.** Constant, exponential, Pareto and normal distributions, voice and video
+  presets, and estimated profiles for games, video conferencing, remote desktop and market data.
+* **Distributed.** Remote-launch agent, central log server, Prometheus metrics, optional shared-key
+  authentication, and a library API in addition to the command line.
 
 ## Layout
 
@@ -29,6 +49,47 @@ target/release/rtnp-decode tx.jsonl rx.jsonl -f csv
 target/release/rtnp-decode rx.jsonl --flow 1 -i 1000
 ```
 
+A two-way G.711 A-law call, DSCP-marked EF, with limits (real output from a loopback run):
+
+```sh
+rtnp-send flow -t 127.0.0.1:8998 -c 127.0.0.1:8999 --rtp g711a --ptime 30 --wire rtp \
+    --first-marker --tos 184 --max-jitter 30 --max-loss 1 -d 5s
+```
+
+```text
+Flow 1 (session 9600ba92) name=flow1 proto=udp
+  tx: packets=167 bytes=42084 late=0
+  rx: packets=167 bytes=42084 duration=4.981s bitrate=67.6 kbit/s rate=33.5 pps
+      delay (relative to first packet) min/avg/max/sd = 0.000/1.591/10.361/0.941 ms
+      jitter mean|D|=0.733 ms rfc3550=0.466 ms
+      seq-gap loss=0 (0.00%) reordered=0
+      marking seen: tos=0xb8 dscp=46
+  rtt: probes=1 min/avg/max = 0.168/0.168/0.168 ms jitter=0.000 ms
+  loss vs tx: 0 (0.00%)
+  verdict: PASS
+```
+
+## Traffic presets
+
+`rtnp-send presets` lists them; use one with `--preset <name>` or in a TOML script. Anything a preset sets
+can be overridden.
+
+| Preset | Traffic | Basis |
+|---|---|---|
+| `voip-g711`, `voip-g711a` | G.711 voice, 20 ms, 50 packets/s | Codec cadence |
+| `voip-g729` | G.729 voice, 20 ms, 50 packets/s | Codec cadence |
+| `voip-g723` | G.723.1 voice, 30 ms, about 33 packets/s | Codec cadence |
+| `fortnite` | 30 packets/s, about 250 B | Estimate |
+| `call-of-duty` | about 22 packets/s, about 900 B | Estimate |
+| `video-conference` | RTP video, 30 fps, about 1.1 Mbit/s (`examples/video-conference.toml` adds audio) | Estimate |
+| `remote-desktop` | Bursty UDP, heavy-tailed gaps, about 600 B | Estimate |
+| `market-data` | Small packets with microbursts, about 200 B | Estimate |
+
+The voice presets follow standard codec timing. The others are **estimates** built from published
+update rates and typical behaviour, not from packet captures. Each sends one stream, whereas real games
+and remote desktop sessions are asymmetric. Treat them as starting points and replace them with measured
+values when you have captures.
+
 Distribution syntax (for `--idt` in ms and `--size` in bytes, and for TOML values): a bare number, or
 `const:v`, `exp:mean`, `normal:mean,sd`, or `pareto:scale,shape`. Constant suits codec traffic,
 exponential random arrivals and talk/silence lengths, Pareto bursty heavy-tailed gaps, and normal sizes
@@ -42,10 +103,10 @@ Defaults: 1000 packets/s, 512-byte packets, 10 s.
 * **Round-trip metering** (`--meter rtt`): the receiver reflects each packet (same size, so no
   amplification) and the sender times it on its own clock, so no clock sync is needed. Works over UDP and
   TCP/SCTP. ICMP flows always report RTT.
-* **Voice** (`--rtp g711|g729|g723`, `voip-*` presets): writes a real RTP header (payload type, sequence,
+* **Voice** (`--rtp g711|g711a|g729|g723`, `voip-*` presets): writes a real RTP header (payload type, sequence,
   8 kHz timestamp, SSRC, marker on talkspurt start). `--vad` alternates talkspurts and silences
   (defaults `exp:1004` / `exp:1587` ms, override with `--vad-talk` / `--vad-silence`).
-* **Plain RTP** (`--wire rtp`, `--video`, `video-*` presets): the UDP payload is exactly an RTP packet,
+* **Plain RTP** (`--wire rtp`, `--video`, the `video-conference` preset): the UDP payload is exactly an RTP packet,
   with no measurement header; see below.
 * **Payloads** (`--payload zero|random|pattern:<hex>|file:<path>`): packet body content after the headers.
 * **Remote launch** (`rtnp-send ... --agent host:port`): run the flows from another host that runs
@@ -88,8 +149,8 @@ rtnp-send flow -t 10.0.0.2:8998 --video --video-fps 25 --video-gop 50 \
   jitter is the RFC 3550 interarrival jitter computed from RTP timestamps and arrival times.
 * **Limits**: RTP carries no send time, so there is no one-way delay (the delay figures are relative to
   the first packet and flagged `delay_relative`), and no round-trip metering (`--meter rtt` is
-  refused). Preset sizes drop the 32-byte header (G.711 is 172 bytes). Not implemented: RTCP, SIP/SDP
-  call setup, SRTP, RTP over TCP, real codec bitstreams.
+  refused; use RTCP for round trip, below). Preset sizes drop the 32-byte header (G.711 is 172 bytes).
+  Not implemented: SIP/SDP call setup, SRTP, RTP over TCP, real codec bitstreams.
 
 ### Choosing voice options
 
@@ -238,12 +299,7 @@ On Ctrl-C a final `{"type":"final","session":..,"flows":[..]}` line carries the 
   mean absolute delay difference and as the RFC 3550 smoothed value.
 * **Loss** is derived from sequence gaps at the receiver, and against the sender's count when both logs
   are decoded together. Duplicates are not tracked separately.
-* **Presets** (`rtnp-send presets`) are approximations. The voice presets are G.711, G.711 A-law, G.729 and G.723.1. `fortnite` (30 packets/s,
-  ~250 B) and `call-of-duty` (~22 packets/s, ~900 B) are **estimates** built from public tick-rate and
-  data-use figures, not from packet captures, and each sends one stream rather than the different traffic
-  per direction a real game uses. `video-conference` (about 1.1 Mbit/s of RTP video; see
-  `examples/video-conference.toml` for audio plus video), `remote-desktop` (bursty UDP) and `market-data`
-  (small packets with microbursts; sub-millisecond gaps can run late) are estimates too.
+* **Presets**: only the voice presets follow codec timing; the rest are estimates (see Traffic presets).
 * **ICMP** needs privileges (root, `CAP_NET_RAW`, or a suitable `net.ipv4.ping_group_range`).
 * **SCTP is implemented but has not been run:** the development kernel has no SCTP support, so only the
   "unsupported" path is tested. Please try it on a host with `sctp` loaded before relying on it.
@@ -255,5 +311,20 @@ On Ctrl-C a final `{"type":"final","session":..,"flows":[..]}` line carries the 
 
 * **DCCP**: removed from recent mainline Linux kernels (the development kernel has none).
 * **Parquet output**: JSONL, CSV and JSON are supported; Parquet would add a large dependency tree.
-* **RTCP / SIP / SDP / SRTP**, and real codec bitstreams (see Plain-RTP mode).
+* **SIP / SDP / SRTP**, and real codec bitstreams (see Plain-RTP mode).
 * **Encrypted control/log channels** (see Security) and SCTP multi-streaming/multi-homing.
+
+## Development
+
+```sh
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+```
+
+The test suite (78 tests) runs entirely on loopback and covers the wire format, RTP and RTCP, the
+control channel and authentication, remote launch, logging and metrics, and end-to-end flows.
+
+## License
+
+[MIT](LICENSE) © 2026 Evan You
