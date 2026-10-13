@@ -1,0 +1,19 @@
+# Voice with RTP + voice-activity detection, and round-trip metering.
+#   rtnp-recv --key-file key --log rx.jsonl
+#   rtnp-send run examples/voice-and-rtt.toml -c 127.0.0.1:8999 --key-file key -l tx.jsonl
+
+[[flow]]
+name = "call"
+preset = "voip-g711"          # RTP header with payload type 0
+vad = true                    # talkspurts ~1.0 s, silences ~1.6 s (ITU-style defaults)
+payload = "random"
+target = "127.0.0.1:8998"
+duration_ms = 20000
+
+[[flow]]
+name = "probe"
+meter = "rtt"                 # receiver reflects each packet; RTT measured on the sender's clock
+rate_pps = 50
+size = 128
+target = "127.0.0.1:8998"
+duration_ms = 20000

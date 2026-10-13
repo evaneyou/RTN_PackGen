@@ -1,0 +1,28 @@
+# Three concurrent flows against a local receiver:
+#   rtnp-recv --log rx.jsonl
+#   rtnp-send run examples/mixed.toml --control 127.0.0.1:8999 --log tx.jsonl
+#   rtnp-decode tx.jsonl rx.jsonl
+
+[[flow]]
+name = "voice"
+preset = "voip-g711"
+target = "127.0.0.1:8998"
+duration_ms = 3000
+
+[[flow]]
+name = "web-ish"
+proto = "tcp"
+target = "127.0.0.1:8998"
+idt_ms = "exp:20"
+size = "pareto:200,1.8"
+duration_ms = 3000
+start_delay_ms = 500
+
+[[flow]]
+name = "bursty-udp"
+proto = "udp"
+target = "127.0.0.1:8998"
+idt_ms = { kind = "pareto", scale = 2.0, shape = 1.6 }
+size = { kind = "uniform", min = 64.0, max = 1200.0 }
+duration_ms = 3000
+seed = 1234

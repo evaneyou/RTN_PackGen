@@ -1,0 +1,16 @@
+# Continuous probes for a monitoring tool. Run with:
+#   rtnp-send run examples/homenetwatch.toml -c 10.0.0.2:8999 --json -i 10s
+# and read the JSON Lines on stdout. Receiver side: rtnp-recv
+[[flow]]
+name = "rtt-udp"
+target = "10.0.0.2:8998"       # the far end of the WireGuard tunnel
+meter = "rtt"
+rate_pps = 5
+size = 100
+forever = true
+
+[[flow]]
+name = "voice-ish"
+target = "10.0.0.2:8998"
+preset = "voip-g711"           # delay, jitter and loss of a 64 kbit/s stream
+forever = true
