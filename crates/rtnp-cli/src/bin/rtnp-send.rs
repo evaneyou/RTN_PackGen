@@ -72,7 +72,7 @@ struct CompareArgs {
     #[arg(long, default_value_t = 46)]
     dscp: u8,
     /// Codec: g711 (µ-law, also g711u/pcmu), g711a (A-law, also pcma), g729 or g723
-    #[arg(long, default_value = "g711a")]
+    #[arg(long, default_value = "g711")]
     codec: Codec,
     /// Packetisation time in ms
     #[arg(long, default_value_t = 20.0)]
