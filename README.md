@@ -272,6 +272,12 @@ configured to; many home routers ignore or clear DSCP, and WireGuard copies the 
 outer packet but the ISP in between usually does not honour it. Run it against the congested hop
 you care about.
 
+## Real-link checks
+
+`scripts/monitor-g711-call.sh` runs a continuous two-way G.711 call over a real link and judges every interval;
+`scripts/check-sctp.sh` checks SCTP on a host that supports it. Both, plus systemd units, are described in
+[docs/real-link-tests.md](docs/real-link-tests.md).
+
 ## Results and databases
 
 RTNP does not depend on any database. It writes plain results (JSON lines, CSV) that you can load into the
@@ -363,7 +369,8 @@ On Ctrl-C a final `{"type":"final","session":..,"flows":[..]}` line carries the 
 * **Presets**: only the voice presets follow codec timing; the rest are estimates (see Traffic presets).
 * **ICMP** needs privileges (root, `CAP_NET_RAW`, or a suitable `net.ipv4.ping_group_range`).
 * **SCTP is implemented but has not been run:** the development kernel has no SCTP support, so only the
-  "unsupported" path is tested. Please try it on a host with `sctp` loaded before relying on it.
+  "unsupported" path is tested. Run `scripts/check-sctp.sh` on a host with `sctp` loaded (see
+  [docs/real-link-tests.md](docs/real-link-tests.md)) before relying on it.
 * Sub-millisecond pacing is limited by OS timer granularity. At 20 kpps on a test machine every packet
   arrived, but about 8% of departures were flagged late.
 * Developed and tested on Linux only.

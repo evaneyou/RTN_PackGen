@@ -1,0 +1,18 @@
+# Far end of the link: answers the monitor's call and returns the second direction.
+#   sudo cp target/release/rtnp-recv /usr/local/bin/
+#   sudo cp scripts/systemd/rtnp-recv.service /etc/systemd/system/
+#   sudo systemctl enable --now rtnp-recv
+# Add --key-file /etc/rtnp/key to both ends to require the shared key (recommended).
+[Unit]
+Description=RTNP receiver
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/rtnp-recv --allow-reverse
+Restart=always
+RestartSec=5
+DynamicUser=yes
+
+[Install]
+WantedBy=multi-user.target

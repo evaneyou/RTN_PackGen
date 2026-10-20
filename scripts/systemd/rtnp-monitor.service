@@ -1,0 +1,22 @@
+# Continuous two-way G.711 call monitor. Install on the host that sits at one end of the link:
+#   sudo cp scripts/monitor-g711-call.sh /usr/local/bin/
+#   sudo cp scripts/systemd/rtnp-monitor.service /etc/systemd/system/
+#   sudo tee /etc/default/rtnp-monitor <<<'TARGET=203.0.113.10'
+#   sudo systemctl enable --now rtnp-monitor
+# Results: one JSON line per interval in /var/log/rtnp/g711-monitor.jsonl and in the journal.
+[Unit]
+Description=RTNP two-way G.711 call monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=/etc/default/rtnp-monitor
+Environment=OUT=/var/log/rtnp/g711-monitor.jsonl
+LogsDirectory=rtnp
+ExecStart=/usr/local/bin/monitor-g711-call.sh
+Restart=always
+RestartSec=10
+DynamicUser=yes
+
+[Install]
+WantedBy=multi-user.target
