@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+Added
+* `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, issue and pull-request templates, Dependabot.
+* A release workflow that builds Linux (x86_64, aarch64) binaries and attaches them to a tag's GitHub release.
+* CI now also builds the docs with warnings as errors.
+
 ## 0.2.0
 
 Added

@@ -1,0 +1,36 @@
+name: Bug report
+description: Something does not work as documented
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Commands you ran
+      description: The rtnp-send and rtnp-recv command lines, or the TOML script. Remove keys and secrets.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Output
+      description: The report or error message. For measurement problems, include a few lines of the JSON log.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `rtnp-send --version`
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Operating system and kernel
+      description: For example Ubuntu 24.04, Linux 6.8. Mention containers, VMs, WireGuard or NAT on the path.

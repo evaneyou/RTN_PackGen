@@ -1,0 +1,56 @@
+name: Release binaries
+
+# Builds Linux binaries and attaches them to the GitHub release for a tag.
+# Runs when you push a tag like v0.2.0, or by hand (Actions tab -> Release binaries -> Run workflow)
+# with the tag name, which also works for a release that already exists.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to build and attach binaries to (for example v0.2.0)
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: x86_64
+          - os: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --workspace --locked
+      - name: Package
+        run: |
+          name="rtnp-${TAG}-linux-${{ matrix.arch }}"
+          mkdir "$name"
+          cp target/release/rtnp-send target/release/rtnp-recv target/release/rtnp-logd target/release/rtnp-decode "$name"/
+          cp README.md LICENSE CHANGELOG.md "$name"/
+          cp -r scripts docs examples "$name"/
+          tar czf "$name.tar.gz" "$name"
+          sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          name="rtnp-${TAG}-linux-${{ matrix.arch }}"
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --title "RTNP ${TAG#v}" --generate-notes
+          fi
+          gh release upload "$TAG" "$name.tar.gz" "$name.tar.gz.sha256" --clobber

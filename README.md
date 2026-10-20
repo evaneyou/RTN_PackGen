@@ -397,6 +397,11 @@ The test suite (106 tests) runs entirely on loopback and covers the wire format,
 (including the RFC 3711 test vectors), G.711 encoding, SIP/SDP call setup, TLS, the control channel and
 authentication, remote launch, logging and metrics, and end-to-end flows.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) and the [code of conduct](CODE_OF_CONDUCT.md). Security problems go through
+[SECURITY.md](SECURITY.md).
+
 ## License
 
 [MIT](LICENSE) © 2026 Evan You

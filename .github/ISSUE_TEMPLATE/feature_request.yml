@@ -1,0 +1,20 @@
+name: Feature request
+description: Suggest an improvement
+labels: [enhancement]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: What are you trying to do?
+      description: The problem first, then the feature you have in mind.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What have you tried or considered instead?
+  - type: textarea
+    id: data
+    attributes:
+      label: Reference data
+      description: For new traffic presets or codecs, a link to a public capture or a spec, if you have one.

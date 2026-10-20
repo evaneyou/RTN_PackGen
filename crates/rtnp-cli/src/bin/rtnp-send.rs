@@ -1,3 +1,6 @@
+// The doc comments on the CLI arguments are the --help text; they use <placeholders> that rustdoc reads as HTML.
+#![allow(rustdoc::invalid_html_tags, rustdoc::broken_intra_doc_links)]
+
 use std::path::PathBuf;
 use std::time::Duration;
 
