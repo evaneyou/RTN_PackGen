@@ -1055,27 +1055,6 @@ mod tests {
     }
 
     #[test]
-    fn game_presets_resolve_as_udp_streams() {
-        for (name, idt) in [("fortnite", 33.33), ("call-of-duty", 45.0)] {
-            let spec = FlowSpec {
-                target: "x:1".into(),
-                preset: Some(name.into()),
-                ..Default::default()
-            };
-            let r = spec.resolve(0).unwrap();
-            assert_eq!(r.proto, Proto::Udp);
-            assert_eq!(r.idt_ms, Dist::Constant { value: idt });
-            assert!(r.rtp.is_none() && r.video.is_none());
-        }
-        assert!(
-            preset::lookup("fortnite")
-                .unwrap()
-                .description
-                .starts_with("ESTIMATE")
-        );
-    }
-
-    #[test]
     fn plain_rtp_rules() {
         let voice = FlowSpec {
             target: "x:1".into(),

@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 A network traffic generator and measurement tool written in Rust. RTNP sends realistic real-time traffic
-(voice, video, game, remote-desktop and market-data patterns, or your own) over UDP, TCP, SCTP and ICMP,
+(voice, video, remote-desktop and market-data patterns, or your own) over UDP, TCP, SCTP and ICMP,
 measures delay, jitter, loss and round trip at the receiver, and checks the result against pass/fail limits.
 
 ## Highlights
@@ -19,7 +19,7 @@ measures delay, jitter, loss and round trip at the receiver, and checks the resu
 * **QoS checks.** Pass/fail limits for round trip, jitter and loss, DSCP verification, and a marked versus
   unmarked comparison to test whether a priority queue protects voice.
 * **Built-in traffic models.** Constant, exponential, Pareto and normal distributions, voice and video
-  presets, and estimated profiles for games, video conferencing, remote desktop and market data.
+  presets, and estimated profiles for video conferencing, remote desktop and market data.
 * **Real calls when you need them.** Optional SIP/SDP call setup, SRTP encryption with per-call keys,
   and real G.711 audio (a test tone or your own WAV file). All off by default.
 * **Distributed.** Remote-launch agent, central log server, Prometheus metrics, optional shared-key
@@ -82,15 +82,13 @@ can be overridden.
 | `voip-g711` (µ-law), `voip-g711a` (A-law) | G.711 voice, 20 ms, 50 packets/s | Codec cadence |
 | `voip-g729` | G.729 voice, 20 ms, 50 packets/s | Codec cadence |
 | `voip-g723` | G.723.1 voice, 30 ms, about 33 packets/s | Codec cadence |
-| `fortnite` | 30 packets/s, about 250 B | Estimate |
-| `call-of-duty` | about 22 packets/s, about 900 B | Estimate |
 | `video-conference` | RTP video, 30 fps, about 1.1 Mbit/s (`examples/video-conference.toml` adds audio) | Estimate |
 | `remote-desktop` | Bursty UDP, heavy-tailed gaps, about 600 B | Estimate |
 | `market-data` | Small packets with microbursts, about 200 B | Estimate |
 
-The voice presets follow standard codec timing. The others are **estimates** built from published
-update rates and typical behaviour, not from packet captures. Each sends one stream, whereas real games
-and remote desktop sessions are asymmetric. Treat them as starting points and replace them with measured
+The voice presets follow standard codec timing. The others are **estimates** built from typical
+behaviour, not from packet captures. Each sends one stream, whereas real remote desktop sessions are
+asymmetric. Treat them as starting points and replace them with measured
 values when you have captures.
 
 Distribution syntax (for `--idt` in ms and `--size` in bytes, and for TOML values): a bare number, or
@@ -387,7 +385,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-The test suite (106 tests) runs entirely on loopback and covers the wire format, RTP and RTCP, SRTP
+The test suite (105 tests) runs entirely on loopback and covers the wire format, RTP and RTCP, SRTP
 (including the RFC 3711 test vectors), G.711 encoding, SIP/SDP call setup, TLS, the control channel and
 authentication, remote launch, logging and metrics, and end-to-end flows.
 
