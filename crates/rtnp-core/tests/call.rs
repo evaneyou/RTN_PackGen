@@ -1,4 +1,4 @@
-//! G.711 A-law voice and two-way (bidirectional) calls.
+//! G.711 voice (µ-law and A-law) and two-way (bidirectional) calls.
 
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::{Arc, Mutex};
@@ -27,12 +27,12 @@ fn recv_cfg(allow_reverse: bool) -> ReceiverConfig {
     }
 }
 
-fn call(target: String) -> FlowSpec {
+fn call(target: String, codec: Codec) -> FlowSpec {
     FlowSpec {
         target,
         name: Some("call".into()),
         wire: Some(Wire::Rtp),
-        rtp: Some(Codec::G711a),
+        rtp: Some(codec),
         ptime_ms: Some(20.0),
         bidirectional: true,
         ..Default::default()
@@ -40,12 +40,18 @@ fn call(target: String) -> FlowSpec {
 }
 
 #[tokio::test]
-async fn g711a_with_30ms_ptime_is_the_captured_stream() {
+async fn g711_with_30ms_ptime_matches_the_captured_stream_for_both_laws() {
+    for (codec, pt, silence) in [(Codec::G711a, 8, 0xd5u8), (Codec::G711, 0, 0xffu8)] {
+        thirty_ms_stream(codec, pt, silence).await;
+    }
+}
+
+async fn thirty_ms_stream(codec: Codec, pt: u8, silence: u8) {
     let sink = UdpSocket::bind((LO, 0)).await.unwrap();
     let spec = FlowSpec {
         target: sink.local_addr().unwrap().to_string(),
         wire: Some(Wire::Rtp),
-        rtp: Some(Codec::G711a),
+        rtp: Some(codec),
         ptime_ms: Some(30.0),
         count: Some(20),
         rtcp_interval_ms: Some(0),
@@ -71,14 +77,20 @@ async fn g711a_with_30ms_ptime_is_the_captured_stream() {
     let ts = |p: &[u8]| u32::from_be_bytes([p[4], p[5], p[6], p[7]]);
     for (i, p) in pkts.iter().enumerate() {
         assert_eq!(p.len(), 252, "12 + 240 bytes");
-        assert_eq!(p[1] & 0x7f, 8, "PCMA");
-        assert!(p[12..].iter().all(|&b| b == 0xd5), "A-law silence");
+        assert_eq!(p[1] & 0x7f, pt, "{codec:?} payload type");
+        assert!(p[12..].iter().all(|&b| b == silence), "{codec:?} silence");
         assert_eq!(ts(p), ts(&pkts[0]).wrapping_add(240 * i as u32));
     }
 }
 
 #[tokio::test]
 async fn two_way_call_reports_both_directions() {
+    for codec in [Codec::G711a, Codec::G711] {
+        two_way_call(codec).await;
+    }
+}
+
+async fn two_way_call(codec: Codec) {
     let log = LogSink::none();
     let rx = Receiver::bind(recv_cfg(true), log.handle()).await.unwrap();
     let (udp, ctl) = (rx.udp_addr().unwrap(), rx.control_addr().unwrap());
@@ -86,7 +98,7 @@ async fn two_way_call_reports_both_directions() {
 
     let spec = FlowSpec {
         count: Some(150), // 3 s
-        ..call(udp.to_string())
+        ..call(udp.to_string(), codec)
     };
     let mut opts = SessionOptions::new(log.handle());
     opts.control = Some(ctl.to_string());
@@ -117,7 +129,7 @@ async fn return_streams_need_consent_and_the_control_channel() {
     let (udp, ctl) = (rx.udp_addr().unwrap(), rx.control_addr().unwrap());
     let server = tokio::spawn(rx.serve(std::future::pending()));
 
-    let flows = vec![call(udp.to_string()).resolve(0).unwrap()];
+    let flows = vec![call(udp.to_string(), Codec::G711a).resolve(0).unwrap()];
     let mut opts = SessionOptions::new(log.handle());
     opts.control = Some(ctl.to_string());
     let (_tx, stop) = watch::channel(false);
@@ -134,7 +146,7 @@ async fn return_streams_need_consent_and_the_control_channel() {
 
 #[test]
 fn bidirectional_resolve_rules() {
-    let ok = call("x:1".into());
+    let ok = call("x:1".into(), Codec::G711a);
     assert!(ok.resolve(0).is_ok());
     let bad = |f: FlowSpec| f.resolve(0).is_err();
     assert!(bad(FlowSpec {
@@ -186,9 +198,9 @@ fn announce(reverse: Option<ReverseSpec>) -> ClientMsg {
     }
 }
 
-fn spec(idt_ms: f64) -> ReverseSpec {
+fn spec(idt_ms: f64, codec: Codec) -> ReverseSpec {
     ReverseSpec {
-        codec: Codec::G711a,
+        codec,
         idt_ms,
         packet_bytes: 172,
         ssrc: 0x2222,
@@ -215,13 +227,19 @@ async fn count_for(src: &UdpSocket, window: Duration) -> Vec<Vec<u8>> {
 
 #[tokio::test]
 async fn return_stream_latches_runs_constantly_and_stops_with_the_session() {
+    for (codec, pt, silence) in [(Codec::G711a, 8, 0xd5u8), (Codec::G711, 0, 0xffu8)] {
+        return_stream(codec, pt, silence).await;
+    }
+}
+
+async fn return_stream(codec: Codec, pt: u8, silence: u8) {
     let log = LogSink::none();
     let rx = Receiver::bind(recv_cfg(true), log.handle()).await.unwrap();
     let (udp, ctl) = (rx.udp_addr().unwrap(), rx.control_addr().unwrap());
     let server = tokio::spawn(rx.serve(std::future::pending()));
 
     let mut c = connect_control(&ctl.to_string(), None).await.unwrap();
-    write_msg(&mut c, &announce(Some(spec(20.0))))
+    write_msg(&mut c, &announce(Some(spec(20.0, codec))))
         .await
         .unwrap();
     match read_msg::<_, ServerMsg>(&mut c).await.unwrap() {
@@ -243,9 +261,9 @@ async fn return_stream_latches_runs_constantly_and_stops_with_the_session() {
     );
     let mut last: Option<(u16, u32)> = None;
     for p in &got {
-        assert_eq!((p.len(), p[0], p[1] & 0x7f), (172, 0x80, 8));
+        assert_eq!((p.len(), p[0], p[1] & 0x7f), (172, 0x80, pt));
         assert_eq!(&p[8..12], &0x2222u32.to_be_bytes());
-        assert!(p[12..].iter().all(|&b| b == 0xd5));
+        assert!(p[12..].iter().all(|&b| b == silence));
         let (seq, ts) = (
             u16::from_be_bytes([p[2], p[3]]),
             u32::from_be_bytes([p[4], p[5], p[6], p[7]]),
@@ -281,7 +299,7 @@ async fn return_stream_stops_when_the_forward_stream_goes_quiet() {
     let server = tokio::spawn(rx.serve(std::future::pending()));
 
     let mut c = connect_control(&ctl.to_string(), None).await.unwrap();
-    write_msg(&mut c, &announce(Some(spec(20.0))))
+    write_msg(&mut c, &announce(Some(spec(20.0, Codec::G711a))))
         .await
         .unwrap();
     let _ = read_msg::<_, ServerMsg>(&mut c).await;
@@ -303,11 +321,11 @@ async fn out_of_bounds_return_requests_are_refused() {
     for bad in [
         ReverseSpec {
             idt_ms: 1.0,
-            ..spec(20.0)
+            ..spec(20.0, Codec::G711a)
         },
         ReverseSpec {
             packet_bytes: 60_000,
-            ..spec(20.0)
+            ..spec(20.0, Codec::G711a)
         },
     ] {
         let mut c = connect_control(&ctl.to_string(), None).await.unwrap();
@@ -336,7 +354,7 @@ async fn interval_reports_cover_the_return_stream() {
     opts.on_interval = Some(Box::new(move |r| sink.lock().unwrap().push(r.clone())));
     let spec = FlowSpec {
         forever: true,
-        ..call(udp.to_string())
+        ..call(udp.to_string(), Codec::G711a)
     };
     let (stop_tx, stop_rx) = watch::channel(false);
     let task = tokio::spawn(run_session(vec![spec.resolve(0).unwrap()], opts, stop_rx));

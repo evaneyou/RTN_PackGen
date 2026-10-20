@@ -150,12 +150,12 @@ impl FromStr for Codec {
     type Err = Error;
     fn from_str(s: &str) -> Result<Self> {
         match s.to_ascii_lowercase().as_str() {
-            "g711" | "g711u" | "pcmu" => Ok(Codec::G711),
-            "g711a" | "pcma" => Ok(Codec::G711a),
+            "g711" | "g711u" | "ulaw" | "pcmu" => Ok(Codec::G711),
+            "g711a" | "alaw" | "pcma" => Ok(Codec::G711a),
             "g729" => Ok(Codec::G729),
             "g723" => Ok(Codec::G723),
             _ => Err(Error::Config(format!(
-                "unknown codec '{s}' (g711, g711a, g729, g723)"
+                "unknown codec '{s}' (g711/g711u/pcmu, g711a/pcma, g729, g723)"
             ))),
         }
     }

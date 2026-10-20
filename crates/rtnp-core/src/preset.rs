@@ -28,7 +28,7 @@ pub fn all() -> Vec<Preset> {
     vec![
         Preset {
             name: "voip-g711",
-            description: "G.711 voice: 160 B payload + RTP every 20 ms (50 pps)",
+            description: "G.711 µ-law voice: 160 B payload + RTP every 20 ms (50 pps), payload type 0",
             proto: Proto::Udp,
             idt_ms: Dist::Constant { value: 20.0 },
             size: Dist::Constant { value: 204.0 },

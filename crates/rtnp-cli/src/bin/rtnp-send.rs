@@ -71,7 +71,7 @@ struct CompareArgs {
     /// DSCP to mark the call with in the protected phase (46 = EF)
     #[arg(long, default_value_t = 46)]
     dscp: u8,
-    /// Codec: g711, g711a, g729 or g723
+    /// Codec: g711 (µ-law, also g711u/pcmu), g711a (A-law, also pcma), g729 or g723
     #[arg(long, default_value = "g711a")]
     codec: Codec,
     /// Packetisation time in ms
@@ -213,7 +213,7 @@ struct FlowArgs {
     /// tone[:<hz>] or wav:<path> (8 kHz mono 16-bit; plain-RTP G.711 only)
     #[arg(long)]
     payload: Option<Payload>,
-    /// Write an RTP header for this codec: g711 (µ-law), g711a (A-law), g729, g723 (UDP only)
+    /// Write an RTP header for this codec: g711 (µ-law, also g711u/pcmu), g711a (A-law, also pcma), g729, g723 (UDP only)
     #[arg(long)]
     rtp: Option<Codec>,
     /// Packetisation time in ms for --rtp voice, e.g. 20 or 30 (sets interval and size)

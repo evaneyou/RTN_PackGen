@@ -79,7 +79,7 @@ can be overridden.
 
 | Preset | Traffic | Basis |
 |---|---|---|
-| `voip-g711`, `voip-g711a` | G.711 voice, 20 ms, 50 packets/s | Codec cadence |
+| `voip-g711` (µ-law), `voip-g711a` (A-law) | G.711 voice, 20 ms, 50 packets/s | Codec cadence |
 | `voip-g729` | G.729 voice, 20 ms, 50 packets/s | Codec cadence |
 | `voip-g723` | G.723.1 voice, 30 ms, about 33 packets/s | Codec cadence |
 | `fortnite` | 30 packets/s, about 250 B | Estimate |
@@ -137,10 +137,10 @@ rtnp-send flow -t 10.0.0.2:8998 --video --video-fps 25 --video-gop 50 \
     --video-i-size normal:60000,5000 --video-p-size normal:6000,2000 -d 30s
 ```
 
-* **Voice**: payload types 0 (G.711 µ-law, `g711`), 8 (A-law, `g711a`), 18 (G.729), 4 (G.723.1), 8 kHz timestamps that follow the schedule (so silences from `--vad`
+* **Voice**: payload types 0 (G.711 µ-law, `g711`/`g711u`/`pcmu`), 8 (A-law, `g711a`/`pcma`), 18 (G.729), 4 (G.723.1), 8 kHz timestamps that follow the schedule (so silences from `--vad`
   appear as timestamp jumps, as in RFC 3551), marker bit on the first packet of each talkspurt.
 * **Packetisation**: `--ptime 30` (G.711: 10-200 ms, G.729: multiples of 10) sets interval and size
-  together, e.g. `--rtp g711a --ptime 30` gives 252-byte packets every 30 ms with timestamp steps of 240.
+  together, e.g. `--rtp g711a --ptime 30` (or `--rtp g711` for µ-law) gives 252-byte packets every 30 ms with timestamp steps of 240.
   Plain-RTP G.711 payloads default to the codec's digital silence (`0xD5` A-law, `0xFF` µ-law); use
   `--payload random` or `pattern:<hex>` for other content.
 * **Video**: frames at `--video-fps`; one I-frame per GOP and P-frames in between, sizes drawn from the
