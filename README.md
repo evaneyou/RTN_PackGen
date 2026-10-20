@@ -83,10 +83,11 @@ can be overridden.
 | `voip-g729` | G.729 voice, 20 ms, 50 packets/s | Codec cadence |
 | `voip-g723` | G.723.1 voice, 30 ms, about 33 packets/s | Codec cadence |
 | `video-conference` | RTP video, 30 fps, about 1.1 Mbit/s (`examples/video-conference.toml` adds audio) | Estimate |
+| `video-1080p60` | RTP video, 60 fps, keyframe every 30 frames, about 2.3 Mbit/s, 1440 B packets | **Measured** from one capture |
 | `remote-desktop` | Bursty UDP, heavy-tailed gaps, about 600 B | Estimate |
 | `market-data` | Small packets with microbursts, about 200 B | Estimate |
 
-The voice presets follow standard codec timing. The others are **estimates** built from typical
+The voice presets follow standard codec timing, and `video-1080p60` is measured from one public capture (a 1080p60 H.265 camera stream; only its packet and frame sizes and timing are used, not its codec). The others are **estimates** built from typical
 behaviour, not from packet captures. Each sends one stream, whereas real remote desktop sessions are
 asymmetric. Treat them as starting points and replace them with measured
 values when you have captures.
@@ -385,7 +386,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-The test suite (105 tests) runs entirely on loopback and covers the wire format, RTP and RTCP, SRTP
+The test suite (106 tests) runs entirely on loopback and covers the wire format, RTP and RTCP, SRTP
 (including the RFC 3711 test vectors), G.711 encoding, SIP/SDP call setup, TLS, the control channel and
 authentication, remote launch, logging and metrics, and end-to-end flows.
 

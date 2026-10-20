@@ -85,6 +85,28 @@ pub fn all() -> Vec<Preset> {
             }),
         },
         Preset {
+            name: "video-1080p60",
+            description: "MEASURED from one capture of a 1080p60 H.265 camera stream over RTP (Wireshark sample 1920x1080_H.265.pcapng): 60 fps, keyframe every 30 frames, ~2.3 Mbit/s, 1440 B RTP packets",
+            proto: Proto::Udp,
+            idt_ms: Dist::Constant { value: 1.0 },
+            size: Dist::Constant { value: 1440.0 },
+            rtp: None,
+            video: Some(VideoSpec {
+                fps: 60.0,
+                gop: 30,
+                i_bytes: Dist::Normal {
+                    mean: 45_600.0,
+                    std_dev: 1_900.0,
+                },
+                p_bytes: Dist::Normal {
+                    mean: 3_300.0,
+                    std_dev: 800.0,
+                },
+                payload_bytes: 1428,
+                ..VideoSpec::default()
+            }),
+        },
+        Preset {
             name: "remote-desktop",
             description: "ESTIMATE of remote desktop / VDI over UDP: bursty, heavy-tailed gaps (mean ~17 ms), ~600 B, ~0.27 Mbit/s on average, varies run to run",
             proto: Proto::Udp,

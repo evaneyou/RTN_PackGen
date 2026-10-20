@@ -188,6 +188,36 @@ async fn video_frames_share_a_timestamp_and_mark_the_last_packet() {
 }
 
 #[tokio::test]
+async fn video_1080p60_preset_matches_the_measured_stream() {
+    let pkts = capture(FlowSpec {
+        preset: Some("video-1080p60".into()),
+        rtcp_interval_ms: Some(0),
+        duration_ms: Some(550), // ~33 frames: a keyframe, 29 P-frames, the next keyframe
+        ..Default::default()
+    })
+    .await;
+    assert!(pkts.iter().all(|p| p.pt == 96 && p.len <= 1440));
+    assert!(pkts.iter().any(|p| p.len == 1440), "full-size packets");
+    let mut frames: Vec<Vec<&Pkt>> = Vec::new();
+    for p in &pkts {
+        match frames.last_mut() {
+            Some(f) if f[0].ts == p.ts => f.push(p),
+            _ => frames.push(vec![p]),
+        }
+    }
+    assert!((30..=36).contains(&frames.len()), "{} frames", frames.len());
+    for w in frames.windows(2) {
+        assert_eq!(w[1][0].ts.wrapping_sub(w[0][0].ts), 1500, "90 kHz / 60 fps");
+    }
+    let size = |f: &Vec<&Pkt>| f.iter().map(|p| p.len - 12).sum::<usize>();
+    assert!(
+        (30_000..=60_000).contains(&size(&frames[0])),
+        "keyframe first"
+    );
+    assert!(frames[1..30].iter().all(|f| size(f) < 12_000), "P-frames");
+}
+
+#[tokio::test]
 async fn receiver_measures_announced_rtp_with_rfc3550_jitter() {
     let log = LogSink::none();
     let rx = Receiver::bind(recv_cfg(), log.handle()).await.unwrap();

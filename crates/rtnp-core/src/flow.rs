@@ -234,9 +234,9 @@ impl VideoSpec {
         if self.gop == 0 {
             return Err(Error::Config("video gop must be at least 1".into()));
         }
-        if !(100..=1400).contains(&self.payload_bytes) {
+        if !(100..=1460).contains(&self.payload_bytes) {
             return Err(Error::Config(
-                "video payload_bytes must be between 100 and 1400".into(),
+                "video payload_bytes must be between 100 and 1460".into(),
             ));
         }
         if !(96..=127).contains(&self.payload_type) {
@@ -1040,6 +1040,16 @@ mod tests {
         .unwrap();
         assert_eq!(video.wire, Wire::Rtp);
         assert!(video.video.is_some());
+        let hd = FlowSpec {
+            target: "x:1".into(),
+            preset: Some("video-1080p60".into()),
+            ..Default::default()
+        }
+        .resolve(0)
+        .unwrap();
+        assert_eq!(hd.wire, Wire::Rtp);
+        let v = hd.video.unwrap();
+        assert_eq!((v.fps, v.gop, v.payload_bytes), (60.0, 30, 1428));
         for name in ["remote-desktop", "market-data"] {
             let r = FlowSpec {
                 target: "x:1".into(),

@@ -251,7 +251,7 @@ struct FlowArgs {
     /// P-frame size in bytes (distribution syntax, default normal:4000,1200)
     #[arg(long, requires = "video")]
     video_p_size: Option<Dist>,
-    /// Maximum RTP payload per packet in bytes (default 1200)
+    /// Maximum RTP payload per packet in bytes (100-1460, default 1200)
     #[arg(long, requires = "video")]
     video_payload: Option<usize>,
     /// RTCP sender-report period for --wire rtp, e.g. 1s (default 5s) or 0 to turn RTCP off. The
