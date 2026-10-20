@@ -163,8 +163,10 @@ fn parse_wav(d: &[u8]) -> std::result::Result<Vec<i16>, String> {
                 return Err("data chunk before fmt chunk".into());
             }
             return Ok(d[body..end]
-                .chunks_exact(2)
-                .map(|c| i16::from_le_bytes([c[0], c[1]]))
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|c| i16::from_le_bytes(*c))
                 .collect());
         }
         pos = body.saturating_add(len).saturating_add(len & 1);
