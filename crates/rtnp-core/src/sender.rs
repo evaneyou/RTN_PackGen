@@ -183,7 +183,7 @@ where
     let r = SockRef::from(sock);
     if let Some(ttl) = cfg.ttl {
         if addr.is_ipv4() {
-            r.set_ttl(ttl)?;
+            r.set_ttl_v4(ttl)?;
         } else {
             r.set_unicast_hops_v6(ttl)?;
         }
@@ -191,7 +191,7 @@ where
     if let Some(tos) = cfg.tos
         && addr.is_ipv4()
     {
-        r.set_tos(tos as u32)?;
+        r.set_tos_v4(tos as u32)?;
     }
     Ok(())
 }

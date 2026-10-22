@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::fmt;
 
 use aes::Aes128;
-use aes::cipher::{KeyIvInit, StreamCipher, generic_array::GenericArray};
+use aes::cipher::{KeyIvInit, StreamCipher};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as B64;
 use hmac::{Hmac, Mac};
@@ -32,6 +32,13 @@ pub struct MasterKey([u8; MASTER_LEN]);
 impl fmt::Debug for MasterKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("MasterKey(<redacted>)")
+    }
+}
+
+/// Serialised as 60 hex characters, so a flow with an SRTP key can be sent to a remote agent.
+impl serde::Serialize for MasterKey {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
+        s.serialize_str(&self.to_hex())
     }
 }
 
@@ -71,7 +78,7 @@ impl MasterKey {
 
     /// A random key from the operating system's RNG.
     pub fn random() -> Self {
-        use rand::RngCore;
+        use rand::Rng;
         let mut b = [0u8; MASTER_LEN];
         rand::rng().fill_bytes(&mut b);
         MasterKey(b)
@@ -111,10 +118,7 @@ fn kdf(master_key: &[u8], master_salt: &[u8], label: u8, out: &mut [u8]) {
     iv[..14].copy_from_slice(master_salt);
     iv[7] ^= label;
     out.fill(0);
-    let mut c = Ctr::new(
-        GenericArray::from_slice(master_key),
-        GenericArray::from_slice(&iv),
-    );
+    let mut c = Ctr::new_from_slices(master_key, &iv).expect("key and IV lengths are fixed");
     c.apply_keystream(out);
 }
 
@@ -177,10 +181,8 @@ impl SessionKeys {
         let ssrc = u32::from_be_bytes([buf[8], buf[9], buf[10], buf[11]]);
         let index = ((roc as u64) << 16) | seq as u64;
         let iv = self.iv(ssrc, index);
-        let mut c = Ctr::new(
-            GenericArray::from_slice(&self.cipher_key),
-            GenericArray::from_slice(&iv),
-        );
+        let mut c =
+            Ctr::new_from_slices(&self.cipher_key, &iv).expect("key and IV lengths are fixed");
         c.apply_keystream(&mut buf[hl..len]);
         let tag = self.tag(&buf[..len], roc);
         buf[len..len + TAG_LEN].copy_from_slice(&tag);
@@ -206,10 +208,8 @@ impl SessionKeys {
         let ssrc = u32::from_be_bytes([buf[8], buf[9], buf[10], buf[11]]);
         let index = ((roc as u64) << 16) | seq as u64;
         let iv = self.iv(ssrc, index);
-        let mut c = Ctr::new(
-            GenericArray::from_slice(&self.cipher_key),
-            GenericArray::from_slice(&iv),
-        );
+        let mut c =
+            Ctr::new_from_slices(&self.cipher_key, &iv).expect("key and IV lengths are fixed");
         c.apply_keystream(&mut buf[hl..body]);
         Some(body)
     }
@@ -294,6 +294,7 @@ impl RxState {
 /// Receiver side: keys plus rollover state per SSRC.
 #[derive(Debug)]
 pub struct SrtpReceiver {
+    master: MasterKey,
     keys: SessionKeys,
     streams: HashMap<u32, RxState>,
 }
@@ -305,9 +306,16 @@ const MAX_STREAMS: usize = 4096;
 impl SrtpReceiver {
     pub fn new(key: &MasterKey) -> Self {
         SrtpReceiver {
+            master: key.clone(),
             keys: key.session(),
             streams: HashMap::new(),
         }
+    }
+
+    /// The master key this receiver was built from (a two-way call protects its return
+    /// stream with the same key).
+    pub fn master(&self) -> &MasterKey {
+        &self.master
     }
 
     /// Authenticate and decrypt the packet in `buf` in place; returns the plaintext length.

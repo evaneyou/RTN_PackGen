@@ -225,8 +225,11 @@ rtnp-send flow -t 10.0.0.2:5060 -c 10.0.0.2:8999 --preset voip-g711a --wire rtp 
   authentication tag is added, so packets are 10 bytes larger (G.711 at 20 ms: 182 bytes). With a fixed
   key, give both ends the same 30-byte key: `rtnp-send srtp-key > srtp.key`, then
   `--srtp-key-file srtp.key` on both (or `RTNP_SRTP_KEY`). The receiver drops packets that fail
-  authentication and counts them as malformed. RTCP is not encrypted (no SRTCP), and SRTP is not
-  available for two-way calls (`--bidir`) or remote agents yet.
+  authentication and counts them as malformed. RTCP is not encrypted (no SRTCP). SRTP only simulates a call's encryption: a key given with
+  `--srtp-key-file` is sent to a remote agent in the launch message, so use TLS on the control channel if
+  that matters. In a two-way call (`--bidir`) the receiver protects its return stream
+  with the same master key (its own SSRC and rollover counter) and the sender decrypts it; return packets
+  that fail authentication are dropped and show up as loss.
 * **SIP/SDP** (`--sip`): the sender's target is the receiver's SIP address. It sends an INVITE over UDP
   with an SDP offer (codec, ptime, and with `--srtp` an SDES `a=crypto` line carrying a fresh key),
   acknowledges the 200 OK, sends media to the address and port in the answer, and hangs up with BYE.
@@ -381,7 +384,7 @@ On Ctrl-C a final `{"type":"final","session":..,"flows":[..]}` line carries the 
 * **SCTP multi-streaming and multi-homing**: SCTP flows use one stream on one address pair.
 * **Fuller SIP**: registration, digest authentication, SIP over TCP/TLS, re-INVITE, and testing against
   third-party PBXs.
-* **SRTCP**, SRTP on two-way calls and remote agents, and DTLS-SRTP key exchange.
+* **SRTCP**, SRTP replay protection, and DTLS-SRTP key exchange.
 * **Real video bitstreams** (H.264/VP8) and real G.729/G.723.1 audio.
 * **Mutual TLS** (client certificates); clients are authenticated with the shared key instead.
 
@@ -393,7 +396,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-The test suite (106 tests) runs entirely on loopback and covers the wire format, RTP and RTCP, SRTP
+The test suite (110 tests) runs entirely on loopback and covers the wire format, RTP and RTCP, SRTP
 (including the RFC 3711 test vectors), G.711 encoding, SIP/SDP call setup, TLS, the control channel and
 authentication, remote launch, logging and metrics, and end-to-end flows.
 

@@ -466,6 +466,12 @@ impl CallKeys {
         m.get_mut(&src).map(|rx| rx.unprotect(buf))
     }
 
+    /// The master key of the SDES call whose media comes from `src`, if any.
+    pub fn key_for(&self, src: SocketAddr) -> Option<MasterKey> {
+        let m = self.inner.lock().ok()?;
+        m.get(&src).map(|rx| rx.master().clone())
+    }
+
     pub fn is_empty(&self) -> bool {
         self.inner.lock().map(|m| m.is_empty()).unwrap_or(true)
     }

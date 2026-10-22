@@ -2,7 +2,11 @@
 
 ## Unreleased
 
+## 0.2.1
+
 Added
+* SRTP on two-way calls (`--bidir`), with a fixed key (`--srtp-key-file`) or a per-call SDES key (`--sip --srtp`). The receiver protects its return stream with the same master key (its own SSRC and rollover counter), and the sender authenticates and decrypts it; return packets that fail authentication are dropped and show as loss. Sizes are counted after decryption, like the forward stream. 
+* SRTP flows can be launched on a remote agent (`--agent`): the key travels in the launch message.
 * `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, issue and pull-request templates, Dependabot.
 * A release workflow that builds Linux (x86_64, aarch64) binaries and attaches them to a tag's GitHub release.
 * CI now also builds the docs with warnings as errors.
