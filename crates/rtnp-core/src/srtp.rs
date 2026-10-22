@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::fmt;
 
 use aes::Aes128;
-use aes::cipher::{KeyIvInit, StreamCipher, generic_array::GenericArray};
+use aes::cipher::{KeyIvInit, StreamCipher};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as B64;
 use hmac::{Hmac, Mac};
@@ -78,7 +78,7 @@ impl MasterKey {
 
     /// A random key from the operating system's RNG.
     pub fn random() -> Self {
-        use rand::RngCore;
+        use rand::Rng;
         let mut b = [0u8; MASTER_LEN];
         rand::rng().fill_bytes(&mut b);
         MasterKey(b)
@@ -118,10 +118,7 @@ fn kdf(master_key: &[u8], master_salt: &[u8], label: u8, out: &mut [u8]) {
     iv[..14].copy_from_slice(master_salt);
     iv[7] ^= label;
     out.fill(0);
-    let mut c = Ctr::new(
-        GenericArray::from_slice(master_key),
-        GenericArray::from_slice(&iv),
-    );
+    let mut c = Ctr::new_from_slices(master_key, &iv).expect("key and IV lengths are fixed");
     c.apply_keystream(out);
 }
 
@@ -184,10 +181,8 @@ impl SessionKeys {
         let ssrc = u32::from_be_bytes([buf[8], buf[9], buf[10], buf[11]]);
         let index = ((roc as u64) << 16) | seq as u64;
         let iv = self.iv(ssrc, index);
-        let mut c = Ctr::new(
-            GenericArray::from_slice(&self.cipher_key),
-            GenericArray::from_slice(&iv),
-        );
+        let mut c =
+            Ctr::new_from_slices(&self.cipher_key, &iv).expect("key and IV lengths are fixed");
         c.apply_keystream(&mut buf[hl..len]);
         let tag = self.tag(&buf[..len], roc);
         buf[len..len + TAG_LEN].copy_from_slice(&tag);
@@ -213,10 +208,8 @@ impl SessionKeys {
         let ssrc = u32::from_be_bytes([buf[8], buf[9], buf[10], buf[11]]);
         let index = ((roc as u64) << 16) | seq as u64;
         let iv = self.iv(ssrc, index);
-        let mut c = Ctr::new(
-            GenericArray::from_slice(&self.cipher_key),
-            GenericArray::from_slice(&iv),
-        );
+        let mut c =
+            Ctr::new_from_slices(&self.cipher_key, &iv).expect("key and IV lengths are fixed");
         c.apply_keystream(&mut buf[hl..body]);
         Some(body)
     }

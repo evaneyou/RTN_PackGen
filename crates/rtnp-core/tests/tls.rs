@@ -34,7 +34,7 @@ impl Pki {
         )
         .unwrap();
         std::fs::write(dir.join("cert.pem"), ck.cert.pem()).unwrap();
-        std::fs::write(dir.join("key.pem"), ck.key_pair.serialize_pem()).unwrap();
+        std::fs::write(dir.join("key.pem"), ck.signing_key.serialize_pem()).unwrap();
         Pki { dir }
     }
     fn server(&self) -> TlsServer {
