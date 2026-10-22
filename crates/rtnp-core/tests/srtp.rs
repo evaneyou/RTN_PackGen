@@ -135,7 +135,7 @@ async fn wrong_key_and_plain_rtp_are_dropped_as_malformed() {
 }
 
 #[test]
-fn srtp_needs_plain_rtp_and_no_bidir() {
+fn srtp_needs_plain_rtp_and_allows_two_way_calls() {
     let base = FlowSpec {
         target: "127.0.0.1:1".into(),
         preset: Some("voip-g711".into()),
@@ -154,7 +154,7 @@ fn srtp_needs_plain_rtp_and_no_bidir() {
         ptime_ms: Some(20.0),
         ..base
     };
-    assert!(bidir.resolve(0).is_err());
+    assert!(bidir.resolve(0).is_ok(), "two-way SRTP calls are supported");
 }
 
 #[tokio::test]

@@ -67,4 +67,4 @@ Limits to keep in mind:
   Round trip comes from RTCP and is reported about every 5 s (`RTCP_INTERVAL` is not set by the script).
 * The monitor is a single stream. To compare marked and unmarked treatment under load, use
   `rtnp-send compare` instead.
-* SRTP is not available with two-way calls.
+* SRTP works on two-way calls (add `--srtp-key-file` on both ends, or `--sip --srtp`); the monitor script does not turn it on by itself.

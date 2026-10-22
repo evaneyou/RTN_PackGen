@@ -378,9 +378,6 @@ async fn execute(specs: Vec<FlowSpec>, mut c: Common) -> Result<()> {
     if limits.is_some() && c.agent.is_some() {
         bail!("--max-rtt/--max-jitter/--max-loss/--expect-dscp are not supported with --agent");
     }
-    if c.agent.is_some() && specs.iter().any(|s| s.srtp_key.is_some()) {
-        bail!("SRTP keys are not sent to remote agents: run SRTP flows from this host");
-    }
     let forever = specs.iter().any(|s| s.forever);
     if forever && c.interval.is_none() {
         c.interval = Some(Duration::from_secs(10));

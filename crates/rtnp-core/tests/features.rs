@@ -473,3 +473,52 @@ async fn sctp_flow_if_kernel_supports_it() {
     server.abort();
     let _ = connect_control; // keep the import used on all paths
 }
+
+#[tokio::test]
+async fn remote_launch_carries_the_srtp_key_to_the_agent() {
+    let log = LogSink::none();
+    let k = rtnp_core::srtp::MasterKey::from_bytes([4; 30]);
+    let far = Receiver::bind(
+        ReceiverConfig {
+            srtp_key: Some(k.clone()),
+            ..keyed(false)
+        },
+        log.handle(),
+    )
+    .await
+    .unwrap();
+    let (far_udp, far_ctl) = (far.udp_addr().unwrap(), far.control_addr().unwrap());
+    let far_task = tokio::spawn(far.serve(std::future::pending()));
+    let agent = Receiver::bind(keyed(true), log.handle()).await.unwrap();
+    let agent_ctl = agent.control_addr().unwrap();
+    let agent_task = tokio::spawn(agent.serve(std::future::pending()));
+
+    let spec = FlowSpec {
+        target: far_udp.to_string(),
+        preset: Some("voip-g711".into()),
+        wire: Some(rtnp_core::flow::Wire::Rtp),
+        rtcp_interval_ms: Some(0),
+        count: Some(50),
+        srtp_key: Some(k),
+        ..Default::default()
+    };
+    let (_tx, stop) = no_stop();
+    let res = remote_launch(
+        &agent_ctl.to_string(),
+        Some(b"s3cret"),
+        vec![spec],
+        Some(far_ctl.to_string()),
+        stop,
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(res.errors.is_empty(), "{:?}", res.errors);
+    let rx = res.reports[0]
+        .rx
+        .as_ref()
+        .expect("far end decrypted the stream");
+    assert_eq!((rx.packets, rx.bytes), (50, 50 * 172));
+    agent_task.abort();
+    far_task.abort();
+}

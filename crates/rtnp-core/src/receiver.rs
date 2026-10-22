@@ -269,7 +269,15 @@ impl Shared {
 
     /// Latch onto the peer of a flow that asked for a return stream and start sending to it.
     /// The stream stops when the session ends or the forward stream goes quiet.
-    fn ensure_reverse(self: &Arc<Self>, sock: &Arc<UdpSocket>, peer: SocketAddr, key: FlowKey) {
+    /// `srtp_key` produces the master key the forward stream was authenticated with, if any; it
+    /// is only called when a return stream is actually started, and protects that stream too.
+    fn ensure_reverse(
+        self: &Arc<Self>,
+        sock: &Arc<UdpSocket>,
+        peer: SocketAddr,
+        key: FlowKey,
+        srtp_key: impl FnOnce() -> Option<crate::srtp::MasterKey>,
+    ) {
         let Some(spec) = lock(&self.reverse_specs).get(&key).cloned() else {
             return;
         };
@@ -283,6 +291,7 @@ impl Shared {
             tasks.insert(key, tx.clone());
             tx
         };
+        let srtp_key = srtp_key();
         let shared = self.clone();
         let sock = sock.clone();
         tokio::spawn(async move {
@@ -290,6 +299,7 @@ impl Shared {
                 sock,
                 peer,
                 spec,
+                srtp_key,
                 stop.subscribe(),
             ));
             loop {
@@ -311,6 +321,7 @@ impl Shared {
 
     /// A plain-RTP packet (UDP payload `pkt`). Streams the sender announced are attributed to
     /// their session and flow; any other RTP source is tracked as session 0, flow = SSRC.
+    #[allow(clippy::too_many_arguments)]
     fn record_rtp(
         self: &Arc<Self>,
         sock: &Arc<UdpSocket>,
@@ -319,6 +330,7 @@ impl Shared {
         pkt: &[u8],
         rx_ns: u64,
         tos: Option<u8>,
+        srtp_key: impl FnOnce() -> Option<crate::srtp::MasterKey>,
     ) {
         let Some(h) = RtpHeader::parse(pkt) else {
             self.malformed.fetch_add(1, Ordering::Relaxed);
@@ -344,7 +356,7 @@ impl Shared {
             (is_new, seq, tx_ns)
         };
         if wants_reverse {
-            self.ensure_reverse(sock, peer, key);
+            self.ensure_reverse(sock, peer, key, srtp_key);
         }
         if is_new {
             log.send(LogRecord::FlowStart {
@@ -698,7 +710,13 @@ async fn udp_loop(
                     None => n,
                 },
             };
-            shared.record_rtp(&sock, &log, peer, &buf[..n], rx_ns, tos);
+            // a return stream is protected with the key that authenticated this stream
+            let rkey = || {
+                srtp.as_ref()
+                    .map(|r| r.master().clone())
+                    .or_else(|| call_keys.key_for(peer))
+            };
+            shared.record_rtp(&sock, &log, peer, &buf[..n], rx_ns, tos, rkey);
             continue;
         }
         match Header::decode(&buf[..n]) {

@@ -386,9 +386,9 @@ pub struct FlowSpec {
     /// `rtnp` (default) or `rtp`: plain RTP on the wire, see [`Wire::Rtp`].
     pub wire: Option<Wire>,
     /// Encrypt the RTP stream with SRTP (AES_CM_128_HMAC_SHA1_80) using this master key (60 hex
-    /// or 40 base64 characters). Plain-RTP flows only. Never serialised, so it is not sent to
-    /// remote agents.
-    #[serde(default, skip_serializing)]
+    /// or 40 base64 characters). Plain-RTP flows only. Sent to a remote agent as part of the
+    /// launch message (SRTP here only simulates a call, so the key is not protected in transit).
+    #[serde(default)]
     pub srtp_key: Option<crate::srtp::MasterKey>,
     /// SRTP with a fresh random key per call, sent to the receiver in the SIP/SDP offer (SDES).
     /// Needs `sip`; conflicts with `srtp_key`.
@@ -677,15 +677,8 @@ impl FlowSpec {
         } else {
             self.srtp_key.clone()
         };
-        if srtp_key.is_some() {
-            if wire != Wire::Rtp {
-                return Err(Error::Config("srtp needs plain RTP (wire = rtp)".into()));
-            }
-            if self.bidirectional {
-                return Err(Error::Config(
-                    "srtp does not support bidirectional calls yet".into(),
-                ));
-            }
+        if srtp_key.is_some() && wire != Wire::Rtp {
+            return Err(Error::Config("srtp needs plain RTP (wire = rtp)".into()));
         }
         if self.bidirectional {
             if wire != Wire::Rtp || video.is_some() || rtp.is_none() {

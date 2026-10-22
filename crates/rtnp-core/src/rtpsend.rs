@@ -152,6 +152,11 @@ pub(crate) async fn run(
             sock.clone(),
             ssrc,
             cfg.bidirectional.then(|| reverse_ssrc(session, flow)),
+            // the return stream of a two-way SRTP call is protected with the same master key
+            cfg.srtp_key
+                .as_ref()
+                .filter(|_| cfg.bidirectional)
+                .map(crate::srtp::SrtpReceiver::new),
             progress.clone(),
         )
     });
@@ -233,6 +238,7 @@ fn spawn_reader(
     sock: Arc<UdpSocket>,
     ssrc: u32,
     reverse_ssrc: Option<u32>,
+    mut reverse_srtp: Option<crate::srtp::SrtpReceiver>,
     progress: Arc<FlowProgress>,
 ) -> tokio::task::JoinHandle<()> {
     crate::tos::enable_recv_tos(&sock);
@@ -258,7 +264,16 @@ fn spawn_reader(
                     } else if let Some(h) = RtpHeader::parse(&buf[..n])
                         && Some(h.ssrc) == reverse_ssrc
                     {
-                        progress.observe_reverse(&h, n, rx_ns, tos);
+                        // SRTP: packets that fail authentication are dropped (they show as
+                        // loss); sizes are counted after decryption, like the forward stream
+                        let len = match reverse_srtp.as_mut() {
+                            Some(rx) => match rx.unprotect(&mut buf[..n]) {
+                                Some(len) => len,
+                                None => continue,
+                            },
+                            None => n,
+                        };
+                        progress.observe_reverse(&h, len, rx_ns, tos);
                     }
                 }
                 // ECONNREFUSED from an earlier ICMP error: not fatal
@@ -305,6 +320,7 @@ pub(crate) async fn run_reverse(
     sock: Arc<UdpSocket>,
     dest: SocketAddr,
     spec: ReverseSpec,
+    srtp_key: Option<crate::srtp::MasterKey>,
     mut stop: watch::Receiver<bool>,
 ) {
     let payload = match spec.codec.silence_byte() {
@@ -353,6 +369,7 @@ pub(crate) async fn run_reverse(
     };
     let seq0: u16 = rand::random();
     let ts0: u32 = rand::random();
+    tx.srtp = srtp_key.map(|k| (k.session(), crate::srtp::TxIndex::new(seq0)));
     let _ = run_audio(&mut tx, &cfg, seq0, ts0, spec.ssrc, &mut stop).await;
 }
 

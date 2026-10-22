@@ -35,6 +35,13 @@ impl fmt::Debug for MasterKey {
     }
 }
 
+/// Serialised as 60 hex characters, so a flow with an SRTP key can be sent to a remote agent.
+impl serde::Serialize for MasterKey {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
+        s.serialize_str(&self.to_hex())
+    }
+}
+
 impl<'de> serde::Deserialize<'de> for MasterKey {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
         let s = String::deserialize(d)?;
@@ -294,6 +301,7 @@ impl RxState {
 /// Receiver side: keys plus rollover state per SSRC.
 #[derive(Debug)]
 pub struct SrtpReceiver {
+    master: MasterKey,
     keys: SessionKeys,
     streams: HashMap<u32, RxState>,
 }
@@ -305,9 +313,16 @@ const MAX_STREAMS: usize = 4096;
 impl SrtpReceiver {
     pub fn new(key: &MasterKey) -> Self {
         SrtpReceiver {
+            master: key.clone(),
             keys: key.session(),
             streams: HashMap::new(),
         }
+    }
+
+    /// The master key this receiver was built from (a two-way call protects its return
+    /// stream with the same key).
+    pub fn master(&self) -> &MasterKey {
+        &self.master
     }
 
     /// Authenticate and decrypt the packet in `buf` in place; returns the plaintext length.
