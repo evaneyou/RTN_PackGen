@@ -146,6 +146,10 @@ rtnp-send flow -t 10.0.0.2:8998 --video --video-fps 25 --video-gop 50 \
   given distributions; each frame is split into packets of at most `--video-payload` bytes (default
   1200) that share a 90 kHz timestamp and are sent back to back, with the marker bit on the last
   packet of the frame. Payload type 96. The payload bytes are synthetic, not an H.264/VP8 bitstream.
+  `--video-ease-in 250ms` spreads the packets of the first frame only over that time (off by default).
+  Use it on a path that drops a stream which opens with a large burst: on one home Wi-Fi gateway, a new
+  one-way stream starting with a keyframe of about 25 full-size packets was dropped after that frame
+  about nine times in ten, and a start without the burst was not.
 * **Receiver**: recognises RTP automatically on the UDP data port. Streams announced over the control
   channel are reported under their flow; any other RTP source is tracked as session 0, flow = SSRC
   (so it also works as a passive RTP monitor). Loss comes from the unwrapped 16-bit sequence number,

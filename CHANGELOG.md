@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+Added
+* `--video-ease-in <time>` (`ease_in_ms` in a script): spread the packets of the first video frame evenly over that time instead of sending them back to back. Off by default. For paths that drop a new stream which opens with a large burst of full-size packets; every later frame is sent as before.
+
 ## 0.2.1
 
 Added

@@ -39,6 +39,44 @@ fn parse(b: &[u8]) -> Pkt {
     }
 }
 
+/// Run a flow against a raw UDP sink and return each packet with the time it arrived.
+async fn capture_timed(spec: FlowSpec) -> Vec<(std::time::Instant, Pkt)> {
+    let sink = UdpSocket::bind((LO, 0)).await.unwrap();
+    let spec = FlowSpec {
+        target: sink.local_addr().unwrap().to_string(),
+        ..spec
+    };
+    let (_tx, stop) = watch::channel(false);
+    let log = LogSink::none();
+    let flow = spec.resolve(0).unwrap();
+    let run = tokio::spawn(run_flow(1, 1, flow, log.handle(), false, stop));
+    let mut out = Vec::new();
+    let mut buf = vec![0u8; 65_536];
+    while let Ok(Ok(n)) = timeout(Duration::from_millis(600), sink.recv(&mut buf)).await {
+        out.push((std::time::Instant::now(), parse(&buf[..n])));
+    }
+    run.await.unwrap().unwrap();
+    out
+}
+
+/// How long each frame took to arrive (first to last packet) and when it started, in order.
+fn frame_spans(pkts: &[(std::time::Instant, Pkt)]) -> Vec<(std::time::Instant, Duration, usize)> {
+    let mut frames: Vec<(u32, std::time::Instant, std::time::Instant, usize)> = Vec::new();
+    for (at, p) in pkts {
+        match frames.last_mut() {
+            Some(f) if f.0 == p.ts => {
+                f.2 = *at;
+                f.3 += 1;
+            }
+            _ => frames.push((p.ts, *at, *at, 1)),
+        }
+    }
+    frames
+        .into_iter()
+        .map(|(_, first, last, n)| (first, last - first, n))
+        .collect()
+}
+
 /// Run a flow against a raw UDP sink and return everything it sent.
 async fn capture(spec: FlowSpec) -> Vec<Pkt> {
     let sink = UdpSocket::bind((LO, 0)).await.unwrap();
@@ -185,6 +223,66 @@ async fn video_frames_share_a_timestamp_and_mark_the_last_packet() {
             );
         }
     }
+}
+
+fn eased(ease_in_ms: u32) -> FlowSpec {
+    FlowSpec {
+        video: Some(VideoSpec {
+            fps: 25.0,
+            gop: 5,
+            // 20 packets in a keyframe, 2 in the others
+            i_bytes: Dist::Constant { value: 24_000.0 },
+            p_bytes: Dist::Constant { value: 2_400.0 },
+            ease_in_ms,
+            ..VideoSpec::default()
+        }),
+        rtcp_interval_ms: Some(0),
+        duration_ms: Some(400), // 10 frames: keyframes at 0 and 5
+        ..Default::default()
+    }
+}
+
+#[tokio::test]
+async fn video_ease_in_spreads_only_the_first_frame() {
+    let pkts = capture_timed(eased(300)).await;
+    let frames = frame_spans(&pkts);
+    assert_eq!(frames.len(), 10);
+    assert_eq!((frames[0].2, frames[1].2, frames[5].2), (20, 2, 20));
+    // The first keyframe is spread over about 300 ms (19 gaps of 15 ms).
+    assert!(
+        frames[0].1 >= Duration::from_millis(230) && frames[0].1 <= Duration::from_millis(600),
+        "first frame took {:?}",
+        frames[0].1
+    );
+    // The second keyframe, and every other frame, is back to back as usual.
+    for (i, f) in frames.iter().enumerate().skip(1) {
+        assert!(f.1 < Duration::from_millis(30), "frame {i} took {:?}", f.1);
+    }
+    // The frames after the eased one keep their 40 ms spacing: no catch-up burst.
+    for i in 2..frames.len() {
+        let step = frames[i].0 - frames[i - 1].0;
+        assert!(
+            step >= Duration::from_millis(20) && step <= Duration::from_millis(90),
+            "frame {i} came {step:?} after the one before"
+        );
+    }
+    // Nothing is lost or reordered by the pacing.
+    for (i, (_, p)) in pkts.iter().enumerate() {
+        assert_eq!(p.seq, pkts[0].1.seq.wrapping_add(i as u16));
+    }
+}
+
+#[tokio::test]
+async fn video_without_ease_in_sends_the_first_frame_back_to_back() {
+    let pkts = capture_timed(eased(0)).await;
+    let frames = frame_spans(&pkts);
+    assert_eq!(frames.len(), 10);
+    assert_eq!(frames[0].2, 20);
+    assert!(
+        frames[0].1 < Duration::from_millis(30),
+        "first frame took {:?}",
+        frames[0].1
+    );
 }
 
 #[tokio::test]

@@ -428,6 +428,7 @@ async fn run_video(
     let i_size = v.i_bytes.build()?;
     let p_size = v.p_bytes.build()?;
     let frame_dt = Duration::from_secs_f64(1.0 / v.fps);
+    let ease_in = Duration::from_millis(u64::from(v.ease_in_ms));
     let mut payload = PayloadGen::new(&cfg.payload);
     let mut buf = vec![0u8; RTP_HEADER_LEN + v.payload_bytes + crate::srtp::TAG_LEN];
     let mut start = Instant::now();
@@ -469,6 +470,13 @@ async fn run_video(
         let ticks = ((offset.as_nanos() * 9 + 50_000) / 100_000) as u32;
         let ts = ts0.wrapping_add(ticks);
 
+        // Ease-in: the first frame's packets are spread over `ease_in` instead of going back to
+        // back. Only the first frame: a flow that opens with a burst of full-size packets is what
+        // some gateways drop, and every later keyframe goes out as usual.
+        let frame_packets = frame_bytes.div_ceil(v.payload_bytes).max(1);
+        let gap = (frame == 0 && !ease_in.is_zero() && frame_packets > 1)
+            .then(|| ease_in / frame_packets as u32);
+
         let mut remaining = frame_bytes;
         while remaining > 0 {
             if cfg.stop.count.is_some_and(|c| tx.packets >= c)
@@ -490,6 +498,19 @@ async fn run_video(
             payload.fill(&mut buf[RTP_HEADER_LEN..RTP_HEADER_LEN + chunk]);
             tx.send(&mut buf, RTP_HEADER_LEN + chunk).await;
             seq += 1;
+            if let Some(gap) = gap
+                && remaining > 0
+            {
+                tokio::select! {
+                    _ = tokio::time::sleep(gap) => {}
+                    _ = stop.changed() => break 'frames,
+                }
+            }
+        }
+        if gap.is_some() {
+            // The eased frame took longer than a frame interval. Count the schedule from here, so
+            // the frames after it keep their spacing and are not sent late in one catch-up burst.
+            start = Instant::now();
         }
         frame += 1;
     }
