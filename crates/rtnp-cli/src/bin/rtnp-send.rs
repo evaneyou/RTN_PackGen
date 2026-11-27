@@ -257,6 +257,10 @@ struct FlowArgs {
     /// Maximum RTP payload per packet in bytes (100-1460, default 1200)
     #[arg(long, requires = "video")]
     video_payload: Option<usize>,
+    /// Spread the first video frame's packets evenly over this long, e.g. 250ms (default 0: back to
+    /// back, like every other frame). For paths that drop a stream opening with a large burst
+    #[arg(long, requires = "video", value_parser = parse_duration)]
+    video_ease_in: Option<Duration>,
     /// RTCP sender-report period for --wire rtp, e.g. 1s (default 5s) or 0 to turn RTCP off. The
     /// receiver's answers give a standard round-trip time
     #[arg(long, value_parser = parse_duration)]
@@ -315,6 +319,9 @@ async fn main() -> Result<()> {
                     p_bytes: a.video_p_size.unwrap_or(d.p_bytes),
                     payload_bytes: a.video_payload.unwrap_or(d.payload_bytes),
                     payload_type: d.payload_type,
+                    ease_in_ms: a
+                        .video_ease_in
+                        .map_or(d.ease_in_ms, |t| t.as_millis().min(u128::from(u32::MAX)) as u32),
                 }
             });
             let spec = FlowSpec {

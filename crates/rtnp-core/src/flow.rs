@@ -190,7 +190,8 @@ impl FromStr for Wire {
 /// Synthetic video: frames at a fixed rate, one large I-frame per GOP followed by smaller
 /// P-frames, each frame split into RTP packets of at most `payload_bytes`. All packets of a
 /// frame share a timestamp (90 kHz clock) and the last one has the marker bit set. Packets of
-/// a frame are sent back to back, as most encoders/packetisers do.
+/// a frame are sent back to back, as most encoders/packetisers do. With `ease_in_ms` set, the
+/// packets of the very first frame are spread evenly over that time instead.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct VideoSpec {
@@ -205,6 +206,12 @@ pub struct VideoSpec {
     pub payload_bytes: usize,
     /// RTP payload type (dynamic range 96-127).
     pub payload_type: u8,
+    /// Spread the first frame's packets evenly over this many milliseconds (0 = off, the default:
+    /// back to back like every other frame). A stream that opens with a keyframe of two dozen
+    /// full-size packets in one burst is dropped by some home gateways after that first frame.
+    /// Left out of a serialised spec when 0, so a spec without it still reaches an older peer.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub ease_in_ms: u32,
 }
 
 impl Default for VideoSpec {
@@ -222,9 +229,17 @@ impl Default for VideoSpec {
             },
             payload_bytes: 1200,
             payload_type: 96,
+            ease_in_ms: 0,
         }
     }
 }
+
+fn is_zero(value: &u32) -> bool {
+    *value == 0
+}
+
+/// Longest time the first video frame may be spread over.
+pub const MAX_EASE_IN_MS: u32 = 5_000;
 
 impl VideoSpec {
     pub fn validate(&self) -> Result<()> {
@@ -243,6 +258,11 @@ impl VideoSpec {
             return Err(Error::Config(
                 "video payload_type must be in the dynamic range 96-127".into(),
             ));
+        }
+        if self.ease_in_ms > MAX_EASE_IN_MS {
+            return Err(Error::Config(format!(
+                "video ease_in_ms must be at most {MAX_EASE_IN_MS}"
+            )));
         }
         self.i_bytes.build()?;
         self.p_bytes.build()?;
@@ -1129,6 +1149,17 @@ mod tests {
             ..VideoSpec::default()
         };
         assert!(v.validate().is_err());
+        assert_eq!(VideoSpec::default().ease_in_ms, 0, "off by default");
+        let v = VideoSpec {
+            ease_in_ms: MAX_EASE_IN_MS + 1,
+            ..VideoSpec::default()
+        };
+        assert!(v.validate().is_err());
+        let v = VideoSpec {
+            ease_in_ms: 250,
+            ..VideoSpec::default()
+        };
+        assert!(v.validate().is_ok());
     }
 
     #[test]
