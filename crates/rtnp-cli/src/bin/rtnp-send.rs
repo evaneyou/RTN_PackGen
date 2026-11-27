@@ -319,9 +319,9 @@ async fn main() -> Result<()> {
                     p_bytes: a.video_p_size.unwrap_or(d.p_bytes),
                     payload_bytes: a.video_payload.unwrap_or(d.payload_bytes),
                     payload_type: d.payload_type,
-                    ease_in_ms: a
-                        .video_ease_in
-                        .map_or(d.ease_in_ms, |t| t.as_millis().min(u128::from(u32::MAX)) as u32),
+                    ease_in_ms: a.video_ease_in.map_or(d.ease_in_ms, |t| {
+                        t.as_millis().min(u128::from(u32::MAX)) as u32
+                    }),
                 }
             });
             let spec = FlowSpec {
